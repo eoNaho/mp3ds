@@ -8,6 +8,7 @@
 #include "covers.h"
 #include "player.h"
 #include "util.h"
+#include "tap_confirm.h"
 
 #define ROW_H    28
 #define ROWS     5
@@ -25,6 +26,7 @@ static int s_actions_id = -1, s_a_consumed, s_search_open;
 static const char *SEARCH_FIELDS[] = {"Todos", "Titulo", "Artista", "Album", "Pasta"};
 static const char *SEARCH_PLAYS[] = {"Todas", "Nunca tocadas", "Ja tocadas"};
 static int t_down, t_sx, t_sy, t_ly, t_moved, t_acc;
+static TapConfirm s_tap;
 
 static void screens_power(App *a, int off) {
     a->screen_off = off;
@@ -177,6 +179,18 @@ static void search_action(App *a, int action) {
 
 static void tap(App *a, int x, int y) {
     int t = a->tab;
+    /* So a mesma linha/controle pode completar o toque duplo. */
+    int row = a->top[t] + (y - LIST_Y) / ROW_H;
+    int list_play = y >= LIST_Y && y < LIST_Y + ROWS * ROW_H &&
+                    row < list_count(a) &&
+                    !((t == TAB_SONGS || t == TAB_FILA) && x >= BOT_W - 34);
+    int skip = y >= 176 && x >= 52 && x < 208 && x / 52 != 2;
+    int confirm = 0;
+    if (!s_search_open && s_actions_id < 0 &&
+        !(s_eq_open && y >= 134 && y < 176) && (list_play || skip))
+        confirm = tap_confirm(&s_tap, list_play ? t : TAB_N,
+                              list_play ? row : x / 52, osGetTime());
+    else tap_confirm_reset(&s_tap);
     if (s_search_open) {
         if (y >= 34 && y < 74) search_action(a, 0);
         else if (y >= 78 && y < 112) search_action(a, 1);
@@ -219,15 +233,19 @@ static void tap(App *a, int x, int y) {
                 s_eq_open = 0;
             } else if (t == TAB_FILA && x >= BOT_W - 34) {               /* lixeira na borda do item */
                 app_queue_remove(a, row);
-            } else { a->sel[t] = row; activate(a, row); }
+            } else {
+                a->sel[t] = row;
+                if (confirm) activate(a, row);
+                else app_toast(a, "Toque duas vezes para abrir/tocar");
+            }
         }
     } else if (y >= 176) {
         if (x >= 274) s_eq_open = !s_eq_open;                     /* abre/fecha o painel do EQ */
         else switch (x / 52) {
             case 0: app_toggle_shuffle(a); break;
-            case 1: app_prev(a); break;
+            case 1: if (confirm) app_prev(a); else app_toast(a, "Toque duas vezes para voltar"); break;
             case 2: app_toggle_pause(a); break;
-            case 3: app_next(a, 1); break;
+            case 3: if (confirm) app_next(a, 1); else app_toast(a, "Toque duas vezes para avancar"); break;
             default: app_cycle_repeat(a); break;
         }
     }
@@ -239,9 +257,10 @@ int ui_input(App *a) {
     touchPosition tp; hidTouchRead(&tp);
     int dirty = (kd || ku || (kh & KEY_TOUCH)) ? 1 : 0;
 
-    if (a->screen_off) { if (kd) screens_power(a, 0); return 1; }   /* qualquer toque/botao acorda */
+    if (kd & KEY_START) { a->quit = 1; return 1; }
+    if (kd & ~KEY_TOUCH) tap_confirm_reset(&s_tap);
+    if (a->screen_off) { tap_confirm_reset(&s_tap); if (kd) screens_power(a, 0); return 1; }   /* qualquer toque/botao acorda */
 
-    if (kd & KEY_START) a->quit = 1;
     if (s_search_open && a->scan_busy) s_search_open = 0;
     if (s_search_open) {
         s_a_consumed = 1;
@@ -308,7 +327,10 @@ int ui_input(App *a) {
 
     if (kd & KEY_TOUCH) { t_down = 1; t_sx = tp.px; t_sy = t_ly = tp.py; t_moved = 0; t_acc = 0; }
     else if ((kh & KEY_TOUCH) && t_down) {
-        if (abs((int)tp.py - t_sy) > 6) t_moved = 1;
+        if (abs((int)tp.py - t_sy) > 6 || abs((int)tp.px - t_sx) > 6) {
+            t_moved = 1;
+            tap_confirm_reset(&s_tap);
+        }
         if (t_moved && t_sy >= LIST_Y && t_sy < LIST_Y + ROWS * ROW_H) {   /* arrastar rola a lista por linhas */
             t_acc += (int)tp.py - t_ly;
             while (t_acc >= ROW_H)  { a->top[t]--; t_acc -= ROW_H; }

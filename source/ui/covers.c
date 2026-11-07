@@ -60,6 +60,7 @@ void covers_exit(void) {
     s_run = false; LightEvent_Signal(&s_wake);
     if (s_th) { threadJoin(s_th, U64_MAX); threadFree(s_th); s_th = NULL; }
     if (s_done.has) free(s_done.data);
+    C3D_FrameSync();                    /* nenhuma textura ainda em uso pela GPU */
     for (int i = 0; i < COVER_LRU; i++) free_slot(&s_slot[i]);
 }
 

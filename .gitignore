@@ -10,3 +10,4 @@ tests/fixtures/
 .cover-cache/
 
 tests/test_persistence
+tests/test_tap

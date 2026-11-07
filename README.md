@@ -62,13 +62,15 @@ e `last_played`; índices antigos são migrados automaticamente para o formato v
 | START | sair |
 | Cabeçalho da aba Músicas | lupa: buscar; nome da ordenação: alternar Artista/Álbum/Título/Adição/Recentes |
 | Lista de Músicas | mostra o contador de reproduções entre colchetes |
-| Fila: A / toque | tocar a partir do slot escolhido |
+| Fila: A / toque duplo | tocar a partir do slot escolhido |
 | Fila: X ou ✕ na borda | remover da fila |
 | Fila: ←/→ | mover ±1 posição (a faixa tocando acompanha) |
 | 🔍 (cabeçalho) | abre Busca e filtros: A edita o texto, X alterna Todos/Título/Artista/Álbum/Pasta, Y alterna Todas/Nunca tocadas/Já tocadas; B mostra os resultados |
 | 🌙 ou qualquer botão/tecla | desliga/religa as telas |
 | EQ (rodapé) | abre painel com 6 presets (Desligado / Sub / Graves / Voz / Brilho / Suave); toque um preset (voltinhas são o perfil de frequência) |
-| Toque | tocar na lista, arrastar para rolar, botões embaixo |
+| Toque na lista | um toque seleciona; dois toques na mesma linha em até 450 ms abrem/tocam |
+| Anterior / próxima na tela | dois toques em até 450 ms; L / R continuam imediatos |
+| Arrastar | rolar a lista (cancela o toque duplo pendente) |
 
 A busca combina todas as palavras digitadas, em qualquer ordem, ignorando caixa e
 acentos: `cronicas entender` encontra uma faixa com “Crônicas” no artista e

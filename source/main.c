@@ -47,6 +47,7 @@ int main(void) {
     int redraw = 2;   /* 2 frames: as telas do 3DS tem buffer duplo */
     while (aptMainLoop() && !app.quit) {
         if (ui_input(&app)) redraw = 2;
+        if (app.quit) break;            /* START nao inicia mais trabalho nem outro frame */
         app_tick(&app);
         /* Enquanto toca, fechar a tampa nao deve suspender o decoder nem o DSP. */
         aptSetSleepAllowed(player_state() != PS_PLAYING);
@@ -62,9 +63,10 @@ int main(void) {
     }
 
     aptSetSleepAllowed(true);
+    ui_message("Saindo...", "Salvando a fila e encerrando o audio");
     app_exit(&app);
-    covers_exit();
     player_exit();
+    covers_exit();
     ui_exit();
     return 0;
 }

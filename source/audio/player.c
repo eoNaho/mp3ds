@@ -151,9 +151,11 @@ void player_exit(void) {
     s_run = false;
     LightEvent_Signal(&s_ev);
     if (s_th) { threadJoin(s_th, U64_MAX); threadFree(s_th); s_th = NULL; }
+    ndspSetCallback(NULL, NULL);
     ndspChnWaveBufClear(CH);
-    for (int i = 0; i < NBUF; i++) if (pcm[i]) { linearFree(pcm[i]); pcm[i] = NULL; }
+    /* O DSP precisa terminar antes de liberar os buffers que ele ainda pode ler. */
     ndspExit();
+    for (int i = 0; i < NBUF; i++) if (pcm[i]) { linearFree(pcm[i]); pcm[i] = NULL; }
 }
 
 static void post(int cmd, const char *path, uint32_t seek) {

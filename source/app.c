@@ -364,6 +364,15 @@ int app_rescan(App *a, ScanProgress cb, void *ud) {
 
 static Library s_fresh;                 /* biblioteca nova construida pelo worker; trocada no tick (contexto da UI) */
 static volatile int s_scan_done;
+static Thread s_scan_thread;
+
+static void join_scan(void) {
+    if (s_scan_thread) {
+        threadJoin(s_scan_thread, U64_MAX);
+        threadFree(s_scan_thread);
+        s_scan_thread = NULL;
+    }
+}
 
 static int scan_cb(int found, const char *cur, void *ud) {
     (void)cur;
@@ -393,9 +402,8 @@ void app_start_rescan(App *a) {
     queue_free(&a->q); queue_init(&a->q, (unsigned)time(NULL));
     a->cur = -1;
     s32 prio = 0x30; svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    Thread th = threadCreate(scan_worker, a, 96 * 1024, prio + 1, -2, false);
-    if (!th) return;
-    threadDetach(th);
+    s_scan_thread = threadCreate(scan_worker, a, 96 * 1024, prio + 1, -2, false);
+    if (!s_scan_thread) return;
     a->scan_busy = 1;
 }
 
@@ -418,6 +426,7 @@ void app_tick(App *a) {
     /* scan em thread terminou: troca de biblioteca aqui (na UI), libera a antiga com 3 frames de folga */
 #ifdef __3DS__
     if (a->scan_busy && s_scan_done) {
+        join_scan();
         s_scan_done = 0;
         a->scan_old = a->lib.tracks;
         a->lib.tracks = s_fresh.tracks; a->lib.cap = s_fresh.cap; a->lib.count = s_fresh.count;
@@ -473,6 +482,16 @@ void app_init(App *a) {
 }
 
 void app_exit(App *a) {
+#ifdef __3DS__
+    /* O scan usa App e o SD: cancelar e aguardar antes de salvar/liberar tudo. */
+    a->scan_abort = 1;
+    join_scan();
+    if (a->scan_busy) {
+        library_free(&s_fresh);
+        a->scan_busy = 0;
+        s_scan_done = 0;
+    }
+#endif
     app_save_resume(a);
     persistence_exit();
     if (persistence_take_error()) a->stats_dirty = 1;
