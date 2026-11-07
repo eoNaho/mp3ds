@@ -420,7 +420,10 @@ static void draw_bottom(App *a) {
 
 void ui_draw(App *a) {
     static Viz viz;
-    player_get_viz(&viz);
+    static unsigned viz_frame;
+    /* O visualizador e apenas decorativo: 15 Hz reduz calculos de float sem
+       deixar a interface perceptivelmente menos fluida. */
+    if ((viz_frame++ & 1u) == 0 || player_state() != PS_PLAYING) player_get_viz(&viz);
     if (a->screen_off) return;
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     C2D_TextBufClear(s_buf);

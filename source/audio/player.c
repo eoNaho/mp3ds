@@ -5,8 +5,8 @@
 #include "decoder.h"
 
 #define CH          0
-#define NBUF        6
-#define BUF_FRAMES  8192                 /* ~186 ms a 44,1 kHz => ~1,1 s de folga */
+#define NBUF        4
+#define BUF_FRAMES  4096                 /* ~93 ms a 44,1 kHz => ~370 ms para MP3 */
 #define STACK_SZ    (48 * 1024)
 
 enum { CMD_NONE = 0, CMD_PLAY, CMD_STOP, CMD_SEEK };
@@ -139,9 +139,9 @@ int player_init(void) {
 
     s32 prio = 0x30;
     svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    prio = (prio - 1 < 0x18) ? 0x18 : prio - 1;
+    prio = (prio < 0x1A) ? 0x18 : prio - 2;
     s_run = true;
-    APT_SetAppCpuTimeLimit(30);                                  /* libera ~30% do core 1 (syscore) no Old 3DS */
+    APT_SetAppCpuTimeLimit(70);                                  /* audio/UI com folga; o 3DS pode reduzir o clock em repouso */
     s_th = threadCreate(audio_thread, NULL, STACK_SZ, prio, 1, false);
     if (!s_th) s_th = threadCreate(audio_thread, NULL, STACK_SZ, prio, -1, false);
     return s_th ? 0 : -2;

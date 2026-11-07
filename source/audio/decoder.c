@@ -3,6 +3,7 @@
 #include "mp3info.h"
 #include "minimp3.h"
 #include "flac.h"
+#include "config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +61,7 @@ static int decode_next(Decoder *d) {
 
 Decoder *decoder_open(const char *path) {
     size_t plen = strlen(path);
+#if ENABLE_FLAC
     if (plen >= 5 && !strcasecmp(path + plen - 5, ".flac")) {
         Decoder *d = calloc(1, sizeof *d);
         if (!d) return NULL;
@@ -70,6 +72,9 @@ Decoder *decoder_open(const char *path) {
         d->dur = flac_decoder_duration_ms(d->flac);
         return d;
     }
+#else
+    (void)plen;
+#endif
     Id3Info id; Mp3Info mi;
     if (id3_read(path, &id) != 0) return NULL;
     if (mp3info_probe(path, id.audio_start, &mi) != 0) return NULL;

@@ -11,7 +11,7 @@ python3 tools/playlist_tool.py --file minhas-playlists.json \
   init "$HOME/Music"
 
 python3 tools/playlist_tool.py --file minhas-playlists.json \
-  add "Favoritas" "$HOME/Music/Artista/Album/Musica.flac"
+  add "Favoritas" "$HOME/Music/Artista/Album/Musica.mp3"
 
 python3 tools/playlist_tool.py --file minhas-playlists.json list
 
@@ -39,7 +39,7 @@ O JSON pode ser editado manualmente:
   "sd_root": "sdmc:/Music",
   "playlists": {
     "Favoritas": [
-      "Artista/Album/Musica.flac"
+      "Artista/Album/Musica.mp3"
     ],
     "Treino": []
   }

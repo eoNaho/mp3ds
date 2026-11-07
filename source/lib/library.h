@@ -39,7 +39,7 @@ typedef int (*ScanProgress)(int found, const char *current, void *ud);
 void library_free(Library *l);
 int  library_load_index(Library *l, const char *idx_path);       /* 0 = ok */
 int  library_save_index(const Library *l, const char *idx_path); /* 0 = ok */
-/* Varre root recursivamente (.mp3 e .flac). Incremental: reaproveita registros com mesmo tamanho+mtime. */
+/* Varre root recursivamente (.mp3; FLAC experimental pode ser ativado em config.h). */
 int  library_scan(Library *l, const char *root, ScanProgress cb, void *ud);
 void library_sort(Library *l);                                    /* artista, album, faixa, titulo */
 int  library_find_path(const Library *l, const char *path);       /* indice ou -1 */

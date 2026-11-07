@@ -3,6 +3,7 @@
 #include "mp3info.h"
 #include "flacinfo.h"
 #include "util.h"
+#include "config.h"
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -174,7 +175,7 @@ int library_build_albums(const Library *l, AlbumGroup *out, int max) {
 }
 
 static int is_mp3(const char *n) { size_t a = strlen(n); return a > 4 && !strcasecmp(n + a - 4, ".mp3"); }
-static int is_flac(const char *n) { size_t a = strlen(n); return a > 5 && !strcasecmp(n + a - 5, ".flac"); }
+static int is_flac(const char *n) { size_t a = strlen(n); return ENABLE_FLAC && a > 5 && !strcasecmp(n + a - 5, ".flac"); }
 static int is_audio(const char *n) { return is_mp3(n) || is_flac(n); }
 
 static void dir_of(const char *path, char *out, size_t cap) {

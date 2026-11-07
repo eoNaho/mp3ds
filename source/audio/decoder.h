@@ -3,7 +3,7 @@
 
 typedef struct Decoder Decoder;
 
-Decoder *decoder_open(const char *path);          /* NULL se nao for MP3/FLAC valido */
+Decoder *decoder_open(const char *path);          /* NULL se nao for MP3 valido; FLAC e experimental */
 void     decoder_close(Decoder *d);
 int      decoder_sample_rate(const Decoder *d);
 uint32_t decoder_duration_ms(const Decoder *d);

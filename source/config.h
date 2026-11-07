@@ -8,6 +8,9 @@
 #define PLAYLIST_DIR    DATA_DIR "/playlists"
 #define RESUME_PATH     DATA_DIR "/resume.txt"
 
+/* FLAC permanece no codigo para uma etapa futura; o caminho estavel atual e MP3. */
+#define ENABLE_FLAC     0
+
 #define COVER_SIZE      128   /* lado da capa em cache (potencia de 2) */
 #define COVER_MINI      16    /* lado da mini-capa usada como fundo "borrado" */
 #define COVER_LRU       6     /* capas mantidas na VRAM/RAM */

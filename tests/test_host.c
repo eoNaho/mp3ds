@@ -15,6 +15,7 @@
 #include "library.h"
 #include "cover.h"
 #include "util.h"
+#include "config.h"
 
 #define M "fixtures/music"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FALHOU %s:%d  %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
@@ -317,7 +318,9 @@ static int on_prog(int found, const char *cur, void *ud) { (void)cur; (void)ud; 
 static void t_library(void) {
     Library l = {0};
     CHECK(library_scan(&l, M, on_prog, NULL) == 0);
-    CHECK(l.count == 7); CHECK(g_progress == 7); CHECK(l.last_parsed == 7);   /* quebrado.mp3 e .txt ficam de fora */
+    CHECK(l.count == (ENABLE_FLAC ? 7 : 5));
+    CHECK(g_progress == (ENABLE_FLAC ? 7 : 5));
+    CHECK(l.last_parsed == (ENABLE_FLAC ? 7 : 5));   /* quebrado.mp3 e .txt ficam de fora */
     CHECK(!strcasecmp(l.tracks[0].artist, "Artista Ñandú") || l.tracks[0].artist[0]);
     int i = -1; for (int k = 0; k < l.count; k++) if (!strcmp(l.tracks[k].title, "Canção Teste")) i = k;
     CHECK(i >= 0); CHECK(l.tracks[i].track == 3); CHECK(l.tracks[i].duration_ms > 1900);
@@ -333,7 +336,7 @@ static void t_library(void) {
     Library l2 = {0}; CHECK(library_load_index(&l2, "fixtures/lib.idx") == 0);
     CHECK(l2.count == l.count && !memcmp(l2.tracks, l.tracks, sizeof(Track) * l.count));
     CHECK(library_scan(&l2, M, NULL, NULL) == 0);
-    CHECK(l2.count == 7 && l2.last_parsed == 0);                 /* incremental: nada releu */
+    CHECK(l2.count == (ENABLE_FLAC ? 7 : 5) && l2.last_parsed == 0); /* incremental */
     CHECK(library_find_path(&l2, l.tracks[i].path) >= 0); CHECK(library_find_path(&l2, "nao/existe") == -1);
     library_free(&l); library_free(&l2);
     puts("ok library");
@@ -357,7 +360,11 @@ static void t_cover(void) {
 }
 
 int main(void) {
-    t_util(); t_id3(); t_mp3info(); t_decoder(); t_flac(); t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
+    t_util(); t_id3(); t_mp3info(); t_decoder();
+#if ENABLE_FLAC
+    t_flac();
+#endif
+    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }
