@@ -23,3 +23,5 @@ int  queue_slot_id(const Queue *q, int slot);                      /* id no slot
 int  queue_current_slot(const Queue *q);                           /* slot em reproducao */
 int  queue_remove_slot(Queue *q, int slot);                        /* remove e devolve o slot atual */
 int  queue_move_slot(Queue *q, int slot, int dir);                 /* move ±1; devolve o novo slot */
+/* Insere na ordem de reproducao sem mudar a faixa atual; -1 se falhar. */
+int  queue_insert(Queue *q, int id, int next);

@@ -7,6 +7,7 @@
 #define COVER_DIR       DATA_DIR "/covers"
 #define PLAYLIST_DIR    DATA_DIR "/playlists"
 #define MUSIC_PLAYLIST_DIR MUSIC_ROOT "/Playlists"
+#define SESSION_PATH    DATA_DIR "/session.txt"
 #define RESUME_PATH     DATA_DIR "/resume.txt"
 
 /* FLAC permanece no codigo para uma etapa futura; o caminho estavel atual e MP3. */

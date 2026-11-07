@@ -1,6 +1,7 @@
 #include "app.h"
 #include "player.h"
 #include "resume.h"
+#include "session.h"
 #include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,12 +31,14 @@ static int playlist_cmp(const void *pa, const void *pb) {
 void app_refresh_playlists(App *a) {
     PlaylistInfo found[MAX_PLAYLISTS];
     PlaylistInfo extra[MAX_PLAYLISTS];
-    int n = playlist_scan(PLAYLIST_DIR, found, MAX_PLAYLISTS);
-    int m = playlist_scan(MUSIC_ROOT, extra, MAX_PLAYLISTS);
+    /* Prefer the copy next to the music. An older copy in DATA_DIR must not
+       hide the playlist that was just copied to Music/Playlists. */
+    int n = playlist_scan(MUSIC_ROOT, found, MAX_PLAYLISTS);
+    int m = playlist_scan(MUSIC_PLAYLIST_DIR, extra, MAX_PLAYLISTS);
     for (int i = 0; i < m && n < MAX_PLAYLISTS; i++)
         if (!playlist_name_exists(found, n, extra[i].name)) found[n++] = extra[i];
 
-    m = playlist_scan(MUSIC_PLAYLIST_DIR, extra, MAX_PLAYLISTS);
+    m = playlist_scan(PLAYLIST_DIR, extra, MAX_PLAYLISTS);
     for (int i = 0; i < m && n < MAX_PLAYLISTS; i++)
         if (!playlist_name_exists(found, n, extra[i].name)) found[n++] = extra[i];
 
@@ -167,6 +170,11 @@ void app_open_playlist(App *a, int i) {
     int *ids = malloc(sizeof(int) * 512);
     if (!paths || !ids) { free(paths); free(ids); return; }
     int n = playlist_load(a->pls[i].path, paths, 512), m = 0;
+    if (n < 0) {
+        app_toast(a, "Erro ao abrir playlist");
+        free(paths); free(ids);
+        return;
+    }
     for (int k = 0; k < n; k++) { int id = library_find_path(&a->lib, paths[k]); if (id >= 0) ids[m++] = id; }
     if (m == 0) app_toast(a, "Playlist vazia ou faixas nao encontradas");
     else { char t[64]; snprintf(t, sizeof t, "%s: %d faixas", a->pls[i].name, m); app_toast(a, t); app_play_ids(a, ids, m, 0); }
@@ -278,11 +286,21 @@ void app_prev(App *a) {
     if (id >= 0) start_track(a, id);
 }
 
+void app_enqueue(App *a, int id, int next) {
+    if (a->scan_busy || id < 0 || id >= a->lib.count) return;
+    if (queue_insert(&a->q, id, next) < 0) {
+        app_toast(a, "Sem memoria para adicionar a faixa"); return;
+    }
+    session_save(SESSION_PATH, &a->lib, &a->q);
+    app_toast(a, next ? "Adicionada para tocar a seguir" : "Adicionada ao fim da fila");
+}
+
 void app_toggle_pause(App *a) {
     PlayerState s = player_state();
-    if (s == PS_PLAYING) player_pause(1);
+    if (s == PS_PLAYING) { player_pause(1); app_save_resume(a); }
     else if (s == PS_PAUSED) player_pause(0);
-    else if (a->cur >= 0) start_track(a, a->cur);
+    else if (a->q.count) start_track(a, queue_current(&a->q));
+    else if (a->cur >= 0) app_play_library_from(a, a->cur);
     else if (a->tab == TAB_SONGS && app_songs_rows(a)) app_play_from(a, app_row_to_id(a, a->sel[a->tab]));
 }
 
@@ -306,6 +324,7 @@ void app_cycle_repeat(App *a) {
 
 /* salva faixa atual + posicao; sem faixa tocando, apaga o estado */
 void app_save_resume(App *a) {
+    if (!a->scan_busy) session_save(SESSION_PATH, &a->lib, &a->q);
     if (a->cur >= 0 && a->cur < a->lib.count && player_state() != PS_STOPPED) {
         uint32_t ms = player_pos_ms();
         u_copy(a->resume_path, sizeof a->resume_path, a->lib.tracks[a->cur].path);
@@ -429,12 +448,17 @@ void app_init(App *a) {
     app_build_albums(a);
     app_refresh_playlists(a);
     rebuild_view(a);
+    if (session_load(SESSION_PATH, &a->lib, &a->q) == 0) {
+        a->cur = queue_current(&a->q);
+        app_toast(a, "Fila restaurada. B ou play para continuar");
+    }
     /* retomada: seleciona a ultima faixa tocada para achar facil (e mostra no topo) */
     int i = library_find_path(&a->lib, a->resume_path);
-    if (i >= 0) { a->sel[TAB_SONGS] = app_id_to_row(a, i); a->top[TAB_SONGS] = a->sel[TAB_SONGS] > 0 ? a->sel[TAB_SONGS] - 1 : 0; a->cur = i; }
+    if (i >= 0) { a->sel[TAB_SONGS] = app_id_to_row(a, i); a->top[TAB_SONGS] = a->sel[TAB_SONGS] > 0 ? a->sel[TAB_SONGS] - 1 : 0; if (!a->q.count) a->cur = i; }
 }
 
 void app_exit(App *a) {
+    if (!a->scan_busy) session_save(SESSION_PATH, &a->lib, &a->q);
     if (a->cur >= 0 && player_state() != PS_STOPPED) app_save_resume(a);   /* posicao antes de encerrar */
     if (a->stats_dirty) library_save_index(&a->lib, INDEX_PATH);
     player_stop();

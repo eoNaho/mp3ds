@@ -145,7 +145,22 @@ int library_find_path(const Library *l, const char *path) {
     /* Playlists podem ter vindo de outro sistema de arquivos e diferir apenas
        em maiusculas/minusculas (o SD do 3DS nao diferencia esses nomes). */
     for (int i = 0; i < l->count; i++) if (!strcasecmp(l->tracks[i].path, path)) return i;
-    return -1;
+
+    /* Se a biblioteca foi copiada sem a pasta intermediaria (por exemplo,
+       o conteudo de Music/Biblioteca diretamente para Music), o nome do arquivo continua
+       identificando a faixa. So usamos esse fallback quando ha uma unica
+       correspondencia, para nao escolher uma faixa errada em duplicatas. */
+    const char *base = strrchr(path, '/');
+    if (!base || !base[1]) return -1;
+    int found = -1;
+    for (int i = 0; i < l->count; i++) {
+        const char *candidate = strrchr(l->tracks[i].path, '/');
+        if (candidate && !strcasecmp(candidate + 1, base + 1)) {
+            if (found >= 0) return -1;
+            found = i;
+        }
+    }
+    return found;
 }
 
 int library_search(const Library *l, const char *query, int *out, int max) {

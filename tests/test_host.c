@@ -11,6 +11,7 @@
 #include "viz.h"
 #include "queue.h"
 #include "playlist.h"
+#include "session.h"
 #include "resume.h"
 #include "library.h"
 #include "cover.h"
@@ -294,6 +295,42 @@ static void t_queue_slots(void) {
     puts("ok queue slots");
 }
 
+static void t_queue_session(void) {
+    Queue q, restored; queue_init(&q, 91); queue_init(&restored, 5);
+    CHECK(queue_insert(&q, 0, 1) == 0);
+    CHECK(queue_current(&q) == 0);
+    CHECK(queue_insert(&q, 1, 0) == 1);
+    CHECK(queue_insert(&q, 2, 1) == 1);
+    CHECK(queue_current(&q) == 0 && queue_next(&q, 1) == 2);
+    queue_set_shuffle(&q, 1);
+    int current = queue_current(&q), pos = q.pos;
+    CHECK(queue_insert(&q, 3, 1) == pos + 1);
+    CHECK(queue_current(&q) == current);
+    CHECK(queue_slot_id(&q, pos + 1) == 3);
+    CHECK(queue_insert(&q, 1, 0) == 4); /* repeticoes intencionais */
+    q.repeat = REPEAT_ALL;
+    Library lib = {0}; lib.count = 4;
+    lib.tracks = calloc(4, sizeof *lib.tracks);
+    CHECK(lib.tracks != NULL);
+    for (int i = 0; i < 4; i++) snprintf(lib.tracks[i].path, sizeof lib.tracks[i].path,
+                                        "sdmc:/Music/faixa %d.mp3", i);
+    CHECK(session_save("fixtures/session.txt", &lib, &q) == 0);
+    CHECK(session_load("fixtures/session.txt", &lib, &restored) == 0);
+    CHECK(restored.count == q.count && restored.pos == q.pos);
+    CHECK(restored.shuffle == 1 && restored.repeat == REPEAT_ALL);
+    for (int i = 0; i < q.count; i++) CHECK(queue_slot_id(&restored, i) == queue_slot_id(&q, i));
+    CHECK(queue_next(&restored, 1) == 3);
+    lib.tracks[3].path[0] = 0; /* faixa removida do SD: continuar com as restantes */
+    CHECK(session_load("fixtures/session.txt", &lib, &restored) == 0);
+    CHECK(restored.count == q.count - 1 && queue_current(&restored) == current);
+    FILE *f = fopen("fixtures/session-bad.txt", "wb"); CHECK(f != NULL);
+    fputs("mp3ds-session-1 9 9 -1\n", f); fclose(f);
+    CHECK(session_load("fixtures/session-bad.txt", &lib, &restored) == -1);
+    CHECK(queue_current(&restored) == current);
+    queue_free(&q); queue_free(&restored); free(lib.tracks);
+    puts("ok queue session");
+}
+
 static void t_playlist(void) {
     system("mkdir -p fixtures/pl");
     char in[3][PL_PATH_MAX] = {"sdmc:/Music/a.mp3", "sdmc:/Music/Album/b ç.mp3", "sdmc:/Music/c.mp3"};
@@ -302,13 +339,16 @@ static void t_playlist(void) {
     CHECK(playlist_load("fixtures/pl/Minha.m3u", out, 8) == 3);
     for (int i = 0; i < 3; i++) CHECK(!strcmp(in[i], out[i]));
 
-    FILE *f = fopen("fixtures/pl/win.m3u8", "wb");              /* BOM + CRLF + relativo + barra invertida + /abs */
-    fputs("\xEF\xBB\xBF#EXTM3U\r\n#EXTINF:1,x\r\nAlbum\\um.mp3\r\n/Music/dois.mp3\r\n\r\n", f); fclose(f);
-    CHECK(playlist_load("fixtures/pl/win.m3u8", out, 8) == 2);
+    system("mkdir -p fixtures/pl/Playlist");
+    FILE *f = fopen("fixtures/pl/Playlist/win.m3u8", "wb");    /* BOM + CRLF + ../ + /abs */
+    fputs("\xEF\xBB\xBF#EXTM3U\r\n#EXTINF:1,x\r\n../Album/um.mp3\r\n/Music/dois.mp3\r\n\r\n", f); fclose(f);
+    CHECK(playlist_load("fixtures/pl/Playlist/win.m3u8", out, 8) == 2);
     CHECK(!strcmp(out[0], "fixtures/pl/Album/um.mp3")); CHECK(!strcmp(out[1], "sdmc:/Music/dois.mp3"));
 
     PlaylistInfo pi[8]; int n = playlist_scan("fixtures/pl", pi, 8);
-    CHECK(n == 2); CHECK(!strcmp(pi[0].name, "Minha")); CHECK(!strcmp(pi[1].name, "win"));
+    CHECK(n == 1); CHECK(!strcmp(pi[0].name, "Minha"));
+    n = playlist_scan("fixtures/pl/Playlist", pi, 8);
+    CHECK(n == 1); CHECK(!strcmp(pi[0].name, "win"));
     puts("ok playlist");
 }
 
@@ -338,6 +378,7 @@ static void t_library(void) {
     CHECK(library_scan(&l2, M, NULL, NULL) == 0);
     CHECK(l2.count == (ENABLE_FLAC ? 7 : 5) && l2.last_parsed == 0); /* incremental */
     CHECK(library_find_path(&l2, l.tracks[i].path) >= 0); CHECK(library_find_path(&l2, "nao/existe") == -1);
+    CHECK(library_find_path(&l2, "sdmc:/Music/outro-diretorio/01 - Cancao Teste.mp3") == i);
     library_free(&l); library_free(&l2);
     puts("ok library");
 }
@@ -364,7 +405,7 @@ int main(void) {
 #if ENABLE_FLAC
     t_flac();
 #endif
-    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
+    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

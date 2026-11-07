@@ -21,6 +21,7 @@ static C2D_TextBuf s_buf;
 static u32 BG, PANEL, TXT, DIM, ACCENT0;
 
 /* estado do toque */
+static int s_actions_id = -1, s_a_consumed;
 static int t_down, t_sx, t_sy, t_ly, t_moved, t_acc;
 
 static void screens_power(App *a, int off) {
@@ -162,6 +163,14 @@ static void activate(App *a, int row) {
 
 static void tap(App *a, int x, int y) {
     int t = a->tab;
+    if (s_actions_id >= 0) {
+        if (x >= 20 && x < 300 && y >= 48 && y < 144) {
+            int id = s_actions_id;
+            s_actions_id = -1;
+            app_enqueue(a, id, y < 96);
+        } else s_actions_id = -1;
+        return;
+    }
     if (y >= 134 && y < 176 && s_eq_open) {                       /* painel de presets do EQ */
         int p = (x - 8) / 52;
         if (p >= 0 && p < player_eq_count()) player_eq_set(p);
@@ -186,7 +195,11 @@ static void tap(App *a, int x, int y) {
     } else if (y < LIST_Y + ROWS * ROW_H) {
         int row = a->top[t] + (y - LIST_Y) / ROW_H;
         if (row < list_count(a)) {
-            if (t == TAB_FILA && x >= BOT_W - 34) {               /* lixeira na borda do item */
+            if (t == TAB_SONGS && x >= BOT_W - 34) {
+                a->sel[t] = row;
+                s_actions_id = app_row_to_id(a, row);
+                s_eq_open = 0;
+            } else if (t == TAB_FILA && x >= BOT_W - 34) {               /* lixeira na borda do item */
                 app_queue_remove(a, row);
             } else { a->sel[t] = row; activate(a, row); }
         }
@@ -216,22 +229,39 @@ int ui_input(App *a) {
         if (a->tab == TAB_PLAYLISTS) app_refresh_playlists(a);
     }
 
+    if (kd & KEY_A) s_a_consumed = 0;
+    if (s_actions_id >= 0 && a->scan_busy) s_actions_id = -1;
+    if (s_actions_id >= 0 && (kd & (KEY_A | KEY_B | KEY_X | KEY_Y))) {
+        int id = s_actions_id; s_actions_id = -1; s_a_consumed = 1;
+        if (kd & (KEY_A | KEY_X)) app_enqueue(a, id, 1);
+        else if (kd & KEY_Y) app_enqueue(a, id, 0);
+        return dirty;
+    }
     /* A + L/R troca de aba; L/R sozinho continua sendo anterior/proxima faixa.
        Aceita tanto A pressionado antes de L/R quanto os dois juntos. */
     int tab_left = ((kd & KEY_L) && (kh & KEY_A)) || ((kd & KEY_A) && (kh & KEY_L));
     int tab_right = ((kd & KEY_R) && (kh & KEY_A)) || ((kd & KEY_A) && (kh & KEY_R));
     if (tab_left || tab_right) {
+        s_a_consumed = 1;
         cycle_tab(a, tab_left ? -1 : 1);
         clamp_view(a);
         return dirty;
     }
 
     int t = a->tab;
+    if (t == TAB_SONGS && !a->scan_busy && (kh & KEY_A) &&
+        ((kd & (KEY_X | KEY_Y)) || ((kd & KEY_A) && (kh & (KEY_X | KEY_Y))))) {
+        app_enqueue(a, app_row_to_id(a, a->sel[t]), !!(kh & KEY_X));
+        s_a_consumed = 1;
+        return dirty;
+    }
     if (kr & (KEY_DUP | KEY_CPAD_UP))     a->sel[t]--;
     if (kr & (KEY_DDOWN | KEY_CPAD_DOWN)) a->sel[t]++;
     if (a->scan_busy && (kd & KEY_B)) a->scan_abort = 1;            /* cancela o scan em thread */
     else if (kd & KEY_B) app_toggle_pause(a);
-    if (!a->scan_busy && (kd & KEY_A)) activate(a, a->sel[t]);
+    if (!a->scan_busy && t == TAB_SONGS && (ku & KEY_A) && !s_a_consumed)
+        activate(a, a->sel[t]);
+    if (!a->scan_busy && t != TAB_SONGS && (kd & KEY_A)) activate(a, a->sel[t]);
     if (t == TAB_FILA && !a->scan_busy) {                           /* gerenciar a fila */
         if (kd & KEY_X) app_queue_remove(a, a->sel[t]);
         if (kr & KEY_DLEFT)  a->sel[t] = app_queue_move(a, a->sel[t], -1);
@@ -372,12 +402,13 @@ static void draw_bottom(App *a) {
         if (i == a->sel[t]) rect(0, y, BOT_W - 8, ROW_H - 2, PANEL);
         if (t == TAB_SONGS) {
             const Track *tr = &a->lib.tracks[app_row_to_id(a, i)];
-            u_utf8_trunc(b, sizeof b, tr->title, 34);
+            u_utf8_trunc(b, sizeof b, tr->title, 30);
             snprintf(c, sizeof c, "%s  [%u]", tr->artist, (unsigned)tr->plays);
             int playing = (app_row_to_id(a, i) == a->cur);
             if (playing) rect(0, y, 3, ROW_H - 2, accent);
             text(b, 10, y + 1, 0.45f, playing ? accent : TXT);
             text(c, 10, y + 15, 0.34f, DIM);
+            text("+", 295, y + 2, 0.65f, accent);
         } else if (t == TAB_FILA) {
             const Track *tr = &a->lib.tracks[app_queue_slot_id(a, i)];
             u_utf8_trunc(b, sizeof b, tr->title, 30);
@@ -407,6 +438,13 @@ static void draw_bottom(App *a) {
         rect(BOT_W - 4, y, 3, h, DIM);
     }
 
+    if (s_actions_id >= 0) {
+        rrect(16, 42, 288, 116, 8, PANEL);
+        text_center("Adicionar a fila", 160, 46, 0.4f, DIM);
+        text("A/X: tocar a seguir", 28, 68, 0.48f, TXT);
+        text("Y: adicionar ao fim", 28, 112, 0.48f, TXT);
+        text_center("B ou toque fora: cancelar", 160, 144, 0.3f, DIM);
+    }
     /* painel visual do EQ (aberto pelo botao EQ) */
     int eq = player_eq_get();
     if (s_eq_open) {

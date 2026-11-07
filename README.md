@@ -33,6 +33,10 @@ Sem instalar nada: dê push no GitHub; o workflow `.github/workflows/build.yml` 
 - Depois do primeiro scan, o índice salvo é reutilizado nas próximas aberturas, sem analisar todas as músicas novamente. Se os arquivos forem movidos, o app faz uma sincronização automática uma vez para atualizar os caminhos; para procurar músicas novas ou removidas, use `Playlists → Reescanear biblioteca`.
 - Durante a reprodução, fechar a tampa mantém a música tocando; ao pausar ou parar, a suspensão volta a ser permitida.
 
+A fila é salva em `session.txt`, incluindo a ordem de reprodução, a posição atual,
+shuffle e repeat. Ao reabrir, pressione B ou play para continuar; a reprodução
+começa quando você pedir. Faixas removidas do SD são ignoradas na restauração.
+
 O estado de retomada (`resume.txt`) guarda a última faixa e posição: ao abrir de novo
 e tocar a mesma faixa, ela começa de onde parou. O índice também guarda `added`, `plays`
 e `last_played`; índices antigos são migrados automaticamente para o formato v2.
@@ -42,6 +46,8 @@ e `last_played`; índices antigos são migrados automaticamente para o formato v
 |---|---|
 | ↑/↓ ou Circle Pad | mover seleção | 
 | A | tocar selecionado |
+| A + X / A + Y (Músicas) | adicionar a selecionada para tocar a seguir / ao fim da fila |
+| + na borda da música | abrir ações da fila; B ou toque fora cancela |
 | B | pausar/continuar (durante o scan: cancela) |
 | ←/→ | -10 s / +10 s |
 | L / R | anterior / próxima faixa |
@@ -71,6 +77,10 @@ O diretório `tools/` contém um organizador sem dependências externas:
 `tools/playlist_tool.py`. Ele mantém um `playlists.json` editável no PC e exporta
 `.m3u8` compatíveis com o 3DS. Os caminhos ficam relativos à pasta de músicas,
 portanto o arquivo pode ser movido entre computadores.
+
+Para reconhecer músicas e incorporar capas ID3 usando o SongRec, veja
+[`tools/README.md`](tools/README.md) e execute `tools/cover_tool.py` no PC. A
+ferramenta não substitui capas existentes por padrão e não é executada no 3DS.
 
 ```sh
 python3 tools/playlist_tool.py --file minhas-playlists.json init "$HOME/Music"

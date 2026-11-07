@@ -1,6 +1,7 @@
 #include "queue.h"
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 static unsigned rnd(Queue *q) { q->rng ^= q->rng << 13; q->rng ^= q->rng >> 17; q->rng ^= q->rng << 5; return q->rng; }
 
@@ -68,6 +69,22 @@ int queue_slot_id(const Queue *q, int slot) {
 }
 
 int queue_current_slot(const Queue *q) { return q->count ? q->pos : -1; }
+
+int queue_insert(Queue *q, int id, int next) {
+    if (id < 0 || q->count >= INT_MAX / (int)sizeof(int) - 1) return -1;
+    int n = q->count, slot = next && n ? q->pos + 1 : n;
+    int *items = malloc(sizeof(int) * (n + 1));
+    int *order = malloc(sizeof(int) * (n + 1));
+    if (!items || !order) { free(items); free(order); return -1; }
+    if (n) memcpy(items, q->items, sizeof(int) * n);
+    items[n] = id;
+    for (int i = 0; i < n + 1; i++) {
+        order[i] = i == slot ? n : q->order[i < slot ? i : i - 1];
+    }
+    free(q->items); free(q->order);
+    q->items = items; q->order = order; q->count = n + 1;
+    return slot;
+}
 
 int queue_remove_slot(Queue *q, int slot) {
     if (q->count == 0 || slot < 0 || slot >= q->count) return q->pos;

@@ -5,7 +5,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install lameenc mutagen pillow
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y flac
+          pip install lameenc mutagen pillow
       - run: make -C tests
   build-3ds:
     runs-on: ubuntu-latest

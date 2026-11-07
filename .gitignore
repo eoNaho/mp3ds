@@ -7,3 +7,4 @@ build/
 tests/test_host
 tests/fixtures/
 /music
+.cover-cache/

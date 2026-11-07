@@ -57,6 +57,7 @@ void app_play_album(App *a, int group);
 /* TAB_FILA: gerenciar a fila por slot (posicao de reproducao) */
 int  app_queue_rows(const App *a);
 int  app_queue_slot_id(const App *a, int slot);
+void app_enqueue(App *a, int id, int next);       /* next: tocar a seguir; senao ao fim */
 void app_queue_play_from(App *a, int slot);        /* toca a partir do slot */
 int  app_queue_remove(App *a, int slot);           /* remove; devolve o slot atual> */
 int  app_queue_move(App *a, int slot, int dir);    /* move ±1; devolve o novo slot */

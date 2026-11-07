@@ -15,6 +15,45 @@ static int cmp_pl(const void *a, const void *b) {
     return strcasecmp(((const PlaylistInfo *)a)->name, ((const PlaylistInfo *)b)->name);
 }
 
+/* Remove ., .. and duplicate separators from a playlist path. This matters
+   for lists kept in Music/Playlists that use entries such as ../Biblioteca/….
+   Keep the sdmc:/ prefix intact because library paths use the same spelling. */
+static void normalize_path(char *path) {
+    char out[PL_PATH_MAX];
+    size_t prefix = 0, o = 0;
+    const char *p = path;
+
+    if (!strncmp(p, "sdmc:/", 6)) {
+        memcpy(out, p, 6); prefix = o = 6; p += 6;
+    } else if (*p == '/') {
+        out[0] = '/'; prefix = o = 1; p++;
+    }
+
+    while (*p) {
+        const char *start;
+        size_t n;
+        while (*p == '/') p++;
+        start = p;
+        while (*p && *p != '/') p++;
+        n = (size_t)(p - start);
+        if (!n || (n == 1 && start[0] == '.')) continue;
+        if (n == 2 && start[0] == '.' && start[1] == '.') {
+            if (o > prefix) {
+                if (out[o - 1] == '/') o--;
+                while (o > prefix && out[o - 1] != '/') o--;
+            }
+            continue;
+        }
+        if (o > prefix && out[o - 1] != '/') out[o++] = '/';
+        if (o + n >= sizeof out) break;
+        memcpy(out + o, start, n);
+        o += n;
+    }
+    if (o == 0) out[o++] = '.';
+    out[o] = 0;
+    u_copy(path, PL_PATH_MAX, out);
+}
+
 int playlist_scan(const char *dir, PlaylistInfo *out, int max) {
     DIR *d = opendir(dir);
     if (!d) return 0;
@@ -54,6 +93,7 @@ int playlist_load(const char *file, char (*paths)[PL_PATH_MAX], int max) {
         else if (base[0]) r = snprintf(paths[n], PL_PATH_MAX, "%s/%s", base, s);
         else r = snprintf(paths[n], PL_PATH_MAX, "%s", s);
         if (r >= PL_PATH_MAX) continue;               /* caminho longo demais: ignora a entrada */
+        normalize_path(paths[n]);
         n++;
     }
     fclose(f);
