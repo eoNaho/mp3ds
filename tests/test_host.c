@@ -67,6 +67,31 @@ static void t_search_albums(void) {
     puts("ok search/albums");
 }
 
+static void t_sort_and_plays(void) {
+    Library l = {0};
+    CHECK(library_scan(&l, M, NULL, NULL) == 0);
+    int *ids = malloc(sizeof(int) * (size_t)l.count);
+    CHECK(ids);
+    for (int i = 0; i < l.count; i++) ids[i] = i;
+
+    library_sort_ids(&l, ids, l.count, SORT_TITULO);
+    for (int i = 1; i < l.count; i++)
+        CHECK(strcasecmp(l.tracks[ids[i - 1]].title, l.tracks[ids[i]].title) <= 0);
+    library_sort_ids(&l, ids, l.count, SORT_RECENTES);
+    library_record_play(&l, 0, 100);
+    library_record_play(&l, 0, 100);
+    CHECK(l.tracks[0].plays == 2 && l.tracks[0].last_played == 100);
+    library_record_play(&l, 1, 200);
+    CHECK(l.tracks[1].plays == 1 && l.tracks[1].last_played == 200);
+    library_sort_ids(&l, ids, l.count, SORT_RECENTES);
+    CHECK(ids[0] == 1);                                      /* mais recente primeiro */
+    library_sort_ids(&l, ids, l.count, SORT_ADICAO);
+    for (int i = 1; i < l.count; i++) CHECK(l.tracks[ids[i - 1]].added >= l.tracks[ids[i]].added);
+    free(ids);
+    library_free(&l);
+    puts("ok sort/plays");
+}
+
 /* estado de retomada ida e volta */
 static void t_resume(void) {
     system("rm -rf fixtures/rz; mkdir -p fixtures/rz");
@@ -297,7 +322,7 @@ static void t_cover(void) {
 }
 
 int main(void) {
-    t_util(); t_id3(); t_mp3info(); t_decoder(); t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_resume(); t_cover();
+    t_util(); t_id3(); t_mp3info(); t_decoder(); t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

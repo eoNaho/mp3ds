@@ -29,7 +29,8 @@ Sem instalar nada: dê push no GitHub; o workflow `.github/workflows/build.yml` 
 - Durante a reprodução, fechar a tampa mantém a música tocando; ao pausar ou parar, a suspensão volta a ser permitida.
 
 O estado de retomada (`resume.txt`) guarda a última faixa e posição: ao abrir de novo
-e tocar a mesma faixa, ela começa de onde parou.
+e tocar a mesma faixa, ela começa de onde parou. O índice também guarda `added`, `plays`
+e `last_played`; índices antigos são migrados automaticamente para o formato v2.
 
 ## Controles
 | | |
@@ -42,6 +43,8 @@ e tocar a mesma faixa, ela começa de onde parou.
 | X / Y | shuffle / repeat |
 | SELECT | alternar Músicas ↔ Fila ↔ Álbuns ↔ Playlists |
 | START | sair |
+| Cabeçalho da aba Músicas | lupa: buscar; nome da ordenação: alternar Artista/Álbum/Título/Adição/Recentes |
+| Lista de Músicas | mostra o contador de reproduções entre colchetes |
 | Fila: A / toque | tocar a partir do slot escolhido |
 | Fila: X ou ✕ na borda | remover da fila |
 | Fila: ←/→ | mover ±1 posição (a faixa tocando acompanha) |

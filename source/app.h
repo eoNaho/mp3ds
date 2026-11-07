@@ -16,6 +16,8 @@ typedef struct {
     /* busca em TAB_SONGS: linhas sob filtro */
     int *filt; int nfilt;                    /* ids de faixa; NULL = lista inteira */
     char query[48];
+    int *view_ids; int nview;                /* ordem visivel da aba Musicas */
+    SortMode sort_mode;
     int cur;                                 /* indice da faixa tocando (em lib.tracks) ou -1 */
     int fail_streak;
     int screen_off, quit, want_rescan;
@@ -23,6 +25,7 @@ typedef struct {
     /* retomada da ultima faixa/posicao */
     char resume_path[256]; uint32_t resume_ms; int resume_used;
     unsigned save_count;                     /* contagem para o auto-save do estado */
+    int stats_dirty;                         /* plays/last_played ainda nao gravados */
     /* scan em thread (3DS): a UI nao toca em lib enquanto scan_busy */
     volatile int scan_busy, scan_found, scan_abort;
     Track *scan_old; unsigned scan_frames;   /* lib antiga: liberada com folga apos a troca */
@@ -42,6 +45,9 @@ int  app_songs_rows(const App *a);
 int  app_row_to_id(const App *a, int row);              /* -1 se fora do filtro */
 int  app_id_to_row(const App *a, int id);               /* -1 se filtrado */
 void app_set_filter(App *a, const char *query);         /* "" limpa o filtro */
+void app_set_sort(App *a, SortMode mode);
+const char *app_sort_name(SortMode mode);
+void app_cycle_sort(App *a);
 
 /* TAB_ALBUMS: lista de albuns (artista + album) */
 void app_play_album(App *a, int group);

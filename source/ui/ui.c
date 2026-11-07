@@ -166,10 +166,11 @@ static void tap(App *a, int x, int y) {
         if (x < 72) a->tab = TAB_SONGS;
         else if (x < 118) a->tab = TAB_FILA;
         else if (x < 172) a->tab = TAB_ALBUMS;
-        else if (x < 240) { a->tab = TAB_PLAYLISTS; app_refresh_playlists(a); }
+        else if (x < 210) { a->tab = TAB_PLAYLISTS; app_refresh_playlists(a); }
         else if (x >= 282) screens_power(a, 1);
-        else if (t == TAB_SONGS) {
-            if (a->query[0]) { app_set_filter(a, ""); a->sel[TAB_SONGS] = a->top[TAB_SONGS] = 0; }  /* limpa */
+        else if (x >= 210 && x < 245) app_cycle_sort(a);
+        else if (x >= 245 && x < 282 && t == TAB_SONGS) {
+            if (a->query[0]) { app_set_filter(a, ""); a->sel[TAB_SONGS] = a->top[TAB_SONGS] = 0; }
             else ask_query(a);
         }
     } else if (y < LIST_Y + ROWS * ROW_H) {
@@ -325,6 +326,7 @@ static void draw_bottom(App *a) {
     } else {
         icon_search(263, 14, t == TAB_SONGS ? TXT : DIM);
     }
+    if (t == TAB_SONGS) text(app_sort_name(a->sort_mode), 218, 5, 0.28f, DIM);
     C2D_DrawCircleSolid(296, 14, 0.6f, 7, DIM); C2D_DrawCircleSolid(299, 12, 0.7f, 6, PANEL);   /* "lua": tela off */
 
     if (a->scan_busy) { draw_scan(a); return; }
@@ -348,10 +350,10 @@ static void draw_bottom(App *a) {
         int i = a->top[t] + r; float y = LIST_Y + r * ROW_H;
         if (i == a->sel[t]) rect(0, y, BOT_W - 8, ROW_H - 2, PANEL);
         if (t == TAB_SONGS) {
-            const Track *tr = &a->lib.tracks[a->filt ? a->filt[i] : i];
+            const Track *tr = &a->lib.tracks[app_row_to_id(a, i)];
             u_utf8_trunc(b, sizeof b, tr->title, 34);
-            u_utf8_trunc(c, sizeof c, tr->artist, 36);
-            int playing = (!a->query[0] && i == a->cur) || (a->query[0] && a->nfilt > 0 && a->filt[i] == a->cur);
+            snprintf(c, sizeof c, "%s  [%u]", tr->artist, (unsigned)tr->plays);
+            int playing = (app_row_to_id(a, i) == a->cur);
             if (playing) rect(0, y, 3, ROW_H - 2, accent);
             text(b, 10, y + 1, 0.45f, playing ? accent : TXT);
             text(c, 10, y + 15, 0.34f, DIM);

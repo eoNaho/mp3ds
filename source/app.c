@@ -44,31 +44,74 @@ void app_play_album(App *a, int g) {
 
 /* ---------------- busca (TAB_SONGS) ---------------- */
 
-int app_songs_rows(const App *a) { return a->filt ? a->nfilt : a->lib.count; }
+static void rebuild_view(App *a) {
+    free(a->view_ids); a->view_ids = NULL; a->nview = 0;
+    if (a->lib.count <= 0) return;
+    a->view_ids = malloc(sizeof(int) * (size_t)a->lib.count);
+    if (!a->view_ids) return;
+    if (a->filt) {
+        memcpy(a->view_ids, a->filt, sizeof(int) * (size_t)a->nfilt);
+        a->nview = a->nfilt;
+    } else {
+        for (int i = 0; i < a->lib.count; i++) a->view_ids[i] = i;
+        a->nview = a->lib.count;
+    }
+    library_sort_ids(&a->lib, a->view_ids, a->nview, a->sort_mode);
+}
+
+int app_songs_rows(const App *a) { return a->nview; }
 
 int app_row_to_id(const App *a, int row) {
     int n = app_songs_rows(a);
     if (row < 0 || row >= n) return -1;
-    return a->filt ? a->filt[row] : row;
+    return a->view_ids ? a->view_ids[row] : -1;
 }
 
 int app_id_to_row(const App *a, int id) {
     if (id < 0 || id >= a->lib.count) return -1;
-    if (!a->filt) return id;
-    for (int i = 0; i < a->nfilt; i++) if (a->filt[i] == id) return i;
+    for (int i = 0; i < a->nview; i++) if (a->view_ids[i] == id) return i;
     return -1;
 }
 
 void app_set_filter(App *a, const char *query) {
     free(a->filt); a->filt = NULL; a->nfilt = 0;
     u_copy(a->query, sizeof a->query, query ? query : "");
-    if (!a->query[0]) { a->sel[a->tab] = a->top[a->tab] = 0; return; }
-    if (a->lib.count <= 0) return;
-    a->filt = malloc(sizeof(int) * (size_t)a->lib.count);
-    if (!a->filt) { a->query[0] = 0; return; }
-    a->nfilt = library_search(&a->lib, a->query, a->filt, a->lib.count);
-    if (a->nfilt == 0) { free(a->filt); a->filt = NULL; }
+    if (a->query[0] && a->lib.count > 0) {
+        a->filt = malloc(sizeof(int) * (size_t)a->lib.count);
+        if (!a->filt) { a->query[0] = 0; }
+        else {
+            a->nfilt = library_search(&a->lib, a->query, a->filt, a->lib.count);
+            if (a->nfilt == 0) { free(a->filt); a->filt = NULL; }
+        }
+    }
+    rebuild_view(a);
     a->sel[a->tab] = a->top[a->tab] = 0;
+}
+
+const char *app_sort_name(SortMode mode) {
+    switch (mode) {
+        case SORT_ALBUM: return "Album";
+        case SORT_TITULO: return "Titulo";
+        case SORT_ADICAO: return "Adicao";
+        case SORT_RECENTES: return "Recentes";
+        default: return "Artista";
+    }
+}
+
+void app_set_sort(App *a, SortMode mode) {
+    if (mode < SORT_ARTISTA || mode > SORT_RECENTES) mode = SORT_ARTISTA;
+    int old_id = app_row_to_id(a, a->sel[TAB_SONGS]);
+    a->sort_mode = mode;
+    rebuild_view(a);
+    int row = app_id_to_row(a, old_id);
+    a->sel[TAB_SONGS] = row >= 0 ? row : 0;
+    a->top[TAB_SONGS] = 0;
+}
+
+void app_cycle_sort(App *a) {
+    app_set_sort(a, (SortMode)((a->sort_mode + 1) % (SORT_RECENTES + 1)));
+    char msg[64]; snprintf(msg, sizeof msg, "Ordenar: %s", app_sort_name(a->sort_mode));
+    app_toast(a, msg);
 }
 
 /* ---------------- playlists ---------------- */
@@ -109,6 +152,9 @@ static void start_track(App *a, int id) {
     if (id < 0 || id >= a->lib.count) { player_stop(); a->cur = -1; return; }
     a->cur = id;
     const char *p = a->lib.tracks[id].path;
+    library_record_play(&a->lib, id, 0);
+    a->stats_dirty = 1;
+    rebuild_view(a);
     /* 1a reproducao da sessao: se for a ultima faixa, retoma do ponto salvo */
     if (!a->resume_used && a->resume_ms > 2000 && !strcmp(p, a->resume_path)) {
         player_play_seek(p, a->resume_ms);
@@ -170,7 +216,13 @@ int app_queue_move(App *a, int slot, int dir) {
 
 void app_next(App *a, int manual) {
     int id = queue_next(&a->q, manual);
-    if (id < 0) { if (!manual) { player_stop(); a->cur = -1; app_save_resume(a); } return; }
+    if (id < 0) {
+        if (!manual) {
+            player_stop(); a->cur = -1; app_save_resume(a);
+            if (a->stats_dirty) { library_save_index(&a->lib, INDEX_PATH); a->stats_dirty = 0; }
+        }
+        return;
+    }
     start_track(a, id);
 }
 
@@ -185,7 +237,7 @@ void app_toggle_pause(App *a) {
     if (s == PS_PLAYING) player_pause(1);
     else if (s == PS_PAUSED) player_pause(0);
     else if (a->cur >= 0) start_track(a, a->cur);
-    else if (a->tab == TAB_SONGS && app_songs_rows(a)) app_play_library_from(a, app_row_to_id(a, a->sel[a->tab]));
+    else if (a->tab == TAB_SONGS && app_songs_rows(a)) app_play_from(a, app_row_to_id(a, a->sel[a->tab]));
 }
 
 void app_seek_rel(App *a, int ms) {
@@ -213,6 +265,7 @@ void app_save_resume(App *a) {
         u_copy(a->resume_path, sizeof a->resume_path, a->lib.tracks[a->cur].path);
         a->resume_ms = ms;
         resume_save(RESUME_PATH, a->resume_path, ms);
+        if (a->stats_dirty) { library_save_index(&a->lib, INDEX_PATH); a->stats_dirty = 0; }
     } else {
         a->resume_ms = 0;
         resume_save(RESUME_PATH, "", 0);
@@ -229,6 +282,7 @@ int app_rescan(App *a, ScanProgress cb, void *ud) {
     library_save_index(&a->lib, INDEX_PATH);
     app_build_albums(a);
     app_set_filter(a, a->query);        /* re-executa o filtro atual se houver */
+    rebuild_view(a);
     return rc;
 }
 
@@ -323,10 +377,12 @@ void app_init(App *a) {
     memset(a, 0, sizeof *a);
     a->cur = -1;
     queue_init(&a->q, (unsigned)time(NULL));
+    a->sort_mode = SORT_ARTISTA;
     library_load_index(&a->lib, INDEX_PATH);
     resume_load(RESUME_PATH, a->resume_path, sizeof a->resume_path, &a->resume_ms);
     app_build_albums(a);
     app_refresh_playlists(a);
+    rebuild_view(a);
     /* retomada: seleciona a ultima faixa tocada para achar facil (e mostra no topo) */
     int i = library_find_path(&a->lib, a->resume_path);
     if (i >= 0) { a->sel[TAB_SONGS] = app_id_to_row(a, i); a->top[TAB_SONGS] = a->sel[TAB_SONGS] > 0 ? a->sel[TAB_SONGS] - 1 : 0; a->cur = i; }
@@ -334,10 +390,12 @@ void app_init(App *a) {
 
 void app_exit(App *a) {
     if (a->cur >= 0 && player_state() != PS_STOPPED) app_save_resume(a);   /* posicao antes de encerrar */
+    if (a->stats_dirty) library_save_index(&a->lib, INDEX_PATH);
     player_stop();
     if (a->scan_old) { free(a->scan_old); a->scan_old = NULL; }
     queue_free(&a->q);
     library_free(&a->lib);
     free(a->albums); a->albums = NULL; a->nalb = 0;
     free(a->filt); a->filt = NULL; a->nfilt = 0;
+    free(a->view_ids); a->view_ids = NULL; a->nview = 0;
 }
