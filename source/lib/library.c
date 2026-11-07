@@ -50,7 +50,9 @@ int library_load_index(Library *l, const char *p) {
     if (!l->tracks) { fclose(f); return -3; }
     l->cap = (int)(h.count ? h.count : 1);
     if (h.version == IDX_VERSION) {
-        l->count = (int)fread(l->tracks, sizeof(Track), h.count, f);
+        size_t got = fread(l->tracks, sizeof(Track), h.count, f);
+        if (got != h.count) { fclose(f); library_free(l); return -4; }
+        l->count = (int)got;
     } else {
         LegacyTrack old;
         l->count = 0;
@@ -140,6 +142,9 @@ void library_record_play(Library *l, int id, int64_t when) {
 
 int library_find_path(const Library *l, const char *path) {
     for (int i = 0; i < l->count; i++) if (!strcmp(l->tracks[i].path, path)) return i;
+    /* Playlists podem ter vindo de outro sistema de arquivos e diferir apenas
+       em maiusculas/minusculas (o SD do 3DS nao diferencia esses nomes). */
+    for (int i = 0; i < l->count; i++) if (!strcasecmp(l->tracks[i].path, path)) return i;
     return -1;
 }
 

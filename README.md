@@ -29,7 +29,8 @@ Sem instalar nada: dê push no GitHub; o workflow `.github/workflows/build.yml` 
 ## Requisitos no console
 - `dspfirm.cdc` dumpado (app **DSP1**), senão o `ndsp` não inicia — o app avisa na tela.
 - MP3 em `sdmc:/Music` (mude `MUSIC_ROOT` em `source/config.h`).
-- Dados do app em `sdmc:/3ds/mp3ds/` (`library.idx`, `covers/`, `playlists/*.m3u`, `resume.txt`).
+- Dados do app em `sdmc:/3ds/mp3ds/` (`library.idx`, `covers/`, `playlists/*.m3u`, `resume.txt`). Playlists também são encontradas em `sdmc:/Music/*.m3u` e `sdmc:/Music/Playlists/*.m3u` ou `.m3u8`.
+- Depois do primeiro scan, o índice salvo é reutilizado nas próximas aberturas, sem analisar todas as músicas novamente. Se os arquivos forem movidos, o app faz uma sincronização automática uma vez para atualizar os caminhos; para procurar músicas novas ou removidas, use `Playlists → Reescanear biblioteca`.
 - Durante a reprodução, fechar a tampa mantém a música tocando; ao pausar ou parar, a suspensão volta a ser permitida.
 
 O estado de retomada (`resume.txt`) guarda a última faixa e posição: ao abrir de novo

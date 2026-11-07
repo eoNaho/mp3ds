@@ -26,6 +26,9 @@ O resultado é uma playlist UTF-8 com `sdmc:/Music/...`, pronta para copiar para
 sdmc:/3ds/mp3ds/playlists/
 ```
 
+O `mp3ds` também encontra playlists diretamente em `sdmc:/Music/` ou em
+`sdmc:/Music/Playlists/`, caso você queira manter as listas junto da biblioteca.
+
 Para testar no PC usando caminhos relativos, use `--style relative`. O 3DS também
 aceita playlists relativas quando elas estão no mesmo diretório das músicas, mas
 para o layout padrão `sdmc:/Music` o estilo `sdmc` é o recomendado.

@@ -11,6 +11,7 @@ typedef struct {
     Queue q;
     AlbumGroup *albums; int nalb;            /* reconstruido apos scan/filtro */
     PlaylistInfo pls[MAX_PLAYLISTS]; int npl;
+    int index_loaded;                         /* indice persistente valido foi carregado */
     Tab tab;
     int sel[TAB_N], top[TAB_N];              /* selecao e 1a linha visivel, por aba */
     /* busca em TAB_SONGS: linhas sob filtro */
@@ -35,6 +36,7 @@ void app_init(App *a);
 void app_exit(App *a);
 void app_toast(App *a, const char *msg);
 void app_refresh_playlists(App *a);
+int  app_needs_initial_scan(const App *a);
 int  app_rescan(App *a, ScanProgress cb, void *ud);     /* sincronica: usado no 1o scan no arranque */
 void app_start_rescan(App *a);                          /* 3DS: scan em thread (UI continua viva); scan_busy=1 */
 

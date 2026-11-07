@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #ifdef __3DS__
@@ -16,7 +18,45 @@
 
 void app_toast(App *a, const char *msg) { u_copy(a->toast, sizeof a->toast, msg); a->toast_frames = 120; }
 
-void app_refresh_playlists(App *a) { a->npl = playlist_scan(PLAYLIST_DIR, a->pls, MAX_PLAYLISTS); }
+static int playlist_name_exists(const PlaylistInfo *list, int n, const char *name) {
+    for (int i = 0; i < n; i++) if (!strcasecmp(list[i].name, name)) return 1;
+    return 0;
+}
+
+static int playlist_cmp(const void *pa, const void *pb) {
+    return strcasecmp(((const PlaylistInfo *)pa)->name, ((const PlaylistInfo *)pb)->name);
+}
+
+void app_refresh_playlists(App *a) {
+    PlaylistInfo found[MAX_PLAYLISTS];
+    PlaylistInfo extra[MAX_PLAYLISTS];
+    int n = playlist_scan(PLAYLIST_DIR, found, MAX_PLAYLISTS);
+    int m = playlist_scan(MUSIC_ROOT, extra, MAX_PLAYLISTS);
+    for (int i = 0; i < m && n < MAX_PLAYLISTS; i++)
+        if (!playlist_name_exists(found, n, extra[i].name)) found[n++] = extra[i];
+
+    m = playlist_scan(MUSIC_PLAYLIST_DIR, extra, MAX_PLAYLISTS);
+    for (int i = 0; i < m && n < MAX_PLAYLISTS; i++)
+        if (!playlist_name_exists(found, n, extra[i].name)) found[n++] = extra[i];
+
+    qsort(found, n, sizeof *found, playlist_cmp);
+    memcpy(a->pls, found, sizeof(PlaylistInfo) * (size_t)n);
+    a->npl = n;
+}
+
+int app_needs_initial_scan(const App *a) {
+    if (!a->index_loaded) return 1;
+
+    /* Um índice antigo pode continuar exibindo as faixas depois que elas
+       foram reorganizadas no SD. Nesse caso as músicas aparecem na tela, mas
+       o caminho salvo não coincide com o caminho das playlists. Faz uma única
+       sincronização para atualizar esses caminhos. */
+    for (int i = 0; i < a->lib.count; i++) {
+        struct stat st;
+        if (stat(a->lib.tracks[i].path, &st) != 0) return 1;
+    }
+    return 0;
+}
 
 static void app_play_ids(App *a, const int *ids, int n, int start);
 
@@ -384,7 +424,7 @@ void app_init(App *a) {
     a->cur = -1;
     queue_init(&a->q, (unsigned)time(NULL));
     a->sort_mode = SORT_ARTISTA;
-    library_load_index(&a->lib, INDEX_PATH);
+    a->index_loaded = library_load_index(&a->lib, INDEX_PATH) == 0;
     resume_load(RESUME_PATH, a->resume_path, sizeof a->resume_path, &a->resume_ms);
     app_build_albums(a);
     app_refresh_playlists(a);

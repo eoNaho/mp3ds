@@ -41,7 +41,8 @@ int main(void) {
 
     static App app;
     app_init(&app);
-    if (app.lib.count == 0) app_rescan(&app, on_scan, NULL);   /* primeiro uso: sincronico com tela de progresso */
+    if (app_needs_initial_scan(&app))
+        app_rescan(&app, on_scan, NULL);   /* somente no primeiro uso ou indice ausente/invalido */
 
     int redraw = 2;   /* 2 frames: as telas do 3DS tem buffer duplo */
     while (aptMainLoop() && !app.quit) {
