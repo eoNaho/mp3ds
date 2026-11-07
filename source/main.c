@@ -80,11 +80,14 @@ int main(void) {
         }
     }
 
-    aptSetSleepAllowed(true);
-    ui_message("Saindo...", "Salvando a fila e encerrando o audio");
-    app_exit(&app);
+    aptSetSleepAllowed(false);
+    ui_exit_message();
+    app_capture_resume(&app);
+    /* Para leitores de audio/capa antes da ultima gravacao no SD. */
     player_exit();
     covers_exit();
+    app_exit(&app);
+    aptSetSleepAllowed(true);
     if (ptmu_ready) ptmuExit();
     ui_exit();
     return 0;

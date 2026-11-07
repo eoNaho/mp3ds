@@ -1,5 +1,7 @@
 #include <3ds.h>
 #include <string.h>
+#include <errno.h>
+#include "util.h"
 #include "persistence.h"
 #include "config.h"
 
@@ -7,7 +9,7 @@ static Thread s_thread;
 static LightLock s_lock;
 static LightEvent s_wake;
 static SaveState *s_pending;
-static int s_run, s_busy, s_error;
+static int s_run, s_busy, s_error, s_error_parts, s_error_code;
 
 static void worker(void *arg) {
     (void)arg;
@@ -21,10 +23,13 @@ static void worker(void *arg) {
             s_busy = job != NULL;
             LightLock_Unlock(&s_lock);
             if (!job) { if (!running) return; break; }
-            int rc = save_state_write(job, SESSION_PATH, RESUME_PATH, INDEX_PATH);
+            errno = 0;
+            int rc = u_mkdir_p(DATA_DIR) == 0
+                ? save_state_write(job, SESSION_PATH, RESUME_PATH, INDEX_PATH) : -1;
+            int code = errno ? errno : EIO;
             save_state_free(job);
             LightLock_Lock(&s_lock);
-            if (rc) s_error = 1;
+            if (rc) { s_error = 1; s_error_parts = rc > 0 ? rc : 0; s_error_code = code; }
             s_busy = 0;
             LightLock_Unlock(&s_lock);
         }
@@ -35,7 +40,7 @@ int persistence_init(void) {
     LightLock_Init(&s_lock); LightEvent_Init(&s_wake, RESET_ONESHOT);
     s_run = 1; s_busy = s_error = 0; s_pending = NULL;
     s32 prio = 0x30; svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    s_thread = threadCreate(worker, NULL, 16 * 1024, prio + 1, -2, false);
+    s_thread = threadCreate(worker, NULL, 48 * 1024, prio + 1, -2, false);
     return s_thread ? 0 : -1;
 }
 
@@ -72,9 +77,13 @@ int persistence_busy(void) {
     return busy;
 }
 
-int persistence_take_error(void) {
+int persistence_take_error(void) { return persistence_take_error_detail(NULL, NULL); }
+
+int persistence_take_error_detail(int *parts, int *code) {
     LightLock_Lock(&s_lock);
     int error = s_error; s_error = 0;
+    if (parts) *parts = s_error_parts;
+    if (code) *code = s_error_code;
     LightLock_Unlock(&s_lock);
     return error;
 }

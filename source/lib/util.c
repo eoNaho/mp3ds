@@ -32,6 +32,44 @@ int u_mkdir_p(const char *path) {
     return 0;
 }
 
+static int replace_saved(const char *tmp, const char *path) {
+    char backup[TRACK_PATH_MAX + 16];
+    if (snprintf(backup, sizeof backup, "%s.bak", path) >= (int)sizeof backup) { errno = ENAMETOOLONG; return -1; }
+    struct stat st;
+    int exists = stat(path, &st) == 0;
+    if (!exists && errno != ENOENT) return -1;
+    if (exists) {
+        if (!S_ISREG(st.st_mode)) { errno = EISDIR; return -1; }
+        if (remove(backup) != 0 && errno != ENOENT) return -1;
+        if (rename(path, backup) != 0) return -1;
+    }
+    if (rename(tmp, path) != 0) {
+        int error = errno;
+        if (exists) rename(backup, path);
+        errno = error; return -1;
+    }
+    remove(backup);
+    return 0;
+}
+
+int u_commit_file(FILE *f, const char *tmp, const char *path, int written) {
+    int error = written && !ferror(f) ? 0 : (errno ? errno : EIO);
+    if (fflush(f) != 0 && !error) error = errno ? errno : EIO;
+    if (fclose(f) != 0 && !error) error = errno ? errno : EIO;
+    if (!error && replace_saved(tmp, path) != 0) error = errno ? errno : EIO;
+    if (!error) return 0;
+    remove(tmp); errno = error;
+    return -1;
+}
+
+FILE *u_open_saved(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (f || errno != ENOENT) return f;
+    char backup[TRACK_PATH_MAX + 16];
+    if (snprintf(backup, sizeof backup, "%s.bak", path) >= (int)sizeof backup) { errno = ENAMETOOLONG; return NULL; }
+    return fopen(backup, "rb");
+}
+
 void u_utf8_trunc(char *dst, size_t cap, const char *src, int max_chars) {
     const unsigned char *s = (const unsigned char *)src;
     size_t o = 0; int n = 0;

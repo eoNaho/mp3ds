@@ -28,6 +28,7 @@ typedef struct {
     /* retomada da ultima faixa/posicao */
     char resume_path[TRACK_PATH_MAX]; uint32_t resume_ms; int resume_used;
     unsigned save_count;                     /* contagem para o auto-save do estado */
+    unsigned save_retry_frames;
     int session_dirty;
     int stats_dirty;                         /* plays/last_played ainda nao gravados */
     /* scan em thread (3DS): a UI nao toca em lib enquanto scan_busy */
@@ -78,3 +79,5 @@ void app_seek_rel(App *a, int ms);
 void app_toggle_shuffle(App *a);
 void app_cycle_repeat(App *a);
 void app_save_resume(App *a);                           /* grava faixa atual + posicao em RESUME_PATH */
+
+void app_capture_resume(App *a); /* captura antes de encerrar o DSP, sem gravar */

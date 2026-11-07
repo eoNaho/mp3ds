@@ -6,3 +6,5 @@ void ui_exit(void);
 void ui_message(const char *line1, const char *line2);  /* tela cheia simples (scan, erros) */
 int  ui_input(App *a);                                   /* le botoes/toque; retorna 1 se algo mudou */
 void ui_draw(App *a);                                    /* desenha as duas telas */
+
+void ui_exit_message(void); /* tenta desenhar sem bloquear a saida */

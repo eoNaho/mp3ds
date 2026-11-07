@@ -1,5 +1,6 @@
 #include "config.h"
 #include "session.h"
+#include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,13 +17,11 @@ int session_save(const char *file, const Library *lib, const Queue *q) {
         if (id < 0 || id >= lib->count) { ok = 0; break; }
         ok = fprintf(f, "%s\n", lib->tracks[id].path) >= 0;
     }
-    if (fclose(f) != 0) ok = 0;
-    if (!ok || rename(tmp, file) != 0) { remove(tmp); return -1; }
-    return 0;
+    return u_commit_file(f, tmp, file, ok);
 }
 
 int session_load(const char *file, const Library *lib, Queue *q) {
-    FILE *f = fopen(file, "rb");
+    FILE *f = u_open_saved(file);
     if (!f) return -1;
     char line[TRACK_PATH_MAX + 8]; int shuffle, repeat, slot;
     if (!fgets(line, sizeof line, f) ||

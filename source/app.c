@@ -341,7 +341,7 @@ void app_cycle_repeat(App *a) {
 /* ---------------- retomada ---------------- */
 
 /* salva faixa atual + posicao; sem faixa tocando, apaga o estado */
-void app_save_resume(App *a) {
+void app_capture_resume(App *a) {
     if (a->scan_busy) return;
     if (a->cur >= 0 && a->cur < a->lib.count && player_state() != PS_STOPPED) {
         u_copy(a->resume_path, sizeof a->resume_path, a->lib.tracks[a->cur].path);
@@ -349,6 +349,12 @@ void app_save_resume(App *a) {
     } else if (a->cur < 0) {
         a->resume_path[0] = 0; a->resume_ms = 0;
     }
+}
+
+void app_save_resume(App *a) {
+    if (a->scan_busy) return;
+    app_capture_resume(a);
+    if (a->save_retry_frames && !a->quit) return;
     if (persistence_submit_parts(&a->lib, &a->q, a->resume_path, a->resume_ms, a->session_dirty, a->stats_dirty) == 0) {
         a->stats_dirty = a->session_dirty = 0;
     }
@@ -434,9 +440,16 @@ void app_start_rescan(App *a) {
 /* ---------------- tick por frame ---------------- */
 
 void app_tick(App *a) {
-    if (persistence_take_error()) {
+    if (a->save_retry_frames) a->save_retry_frames--;
+    int parts, code;
+    if (persistence_take_error_detail(&parts, &code)) {
         a->stats_dirty = a->session_dirty = 1;
-        app_toast(a, "Erro ao salvar no SD; vou tentar novamente");
+        a->save_retry_frames = 150; /* ~5 s: nao repete I/O e capturas a cada frame */
+        const char *file = parts & SAVE_SESSION_ERROR ? "session.txt" :
+                           parts & SAVE_RESUME_ERROR ? "resume.txt" :
+                           parts & SAVE_INDEX_ERROR ? "library.idx" : "pasta de dados";
+        char message[64]; snprintf(message, sizeof message, "SD: %s (erro %d)", file, code);
+        app_toast(a, message);
     }
     int f = player_take_finished();
     if (f == 2) {
@@ -485,7 +498,7 @@ void app_tick(App *a) {
     if (a->cur >= 0 && player_state() != PS_STOPPED) {
         a->resume_ms = player_pos_ms();
         u_copy(a->resume_path, sizeof a->resume_path, a->lib.tracks[a->cur].path);
-        if (++a->save_count >= SAVE_PERIOD) {
+        if (++a->save_count >= SAVE_PERIOD && !a->save_retry_frames) {
             a->save_count = 0;
             /* O tick grava apenas a posicao: nao copia biblioteca nem fila. */
             if (persistence_submit_parts(NULL, NULL, a->resume_path, a->resume_ms, 0, 0) != 0)
@@ -496,7 +509,7 @@ void app_tick(App *a) {
     }
     /* A sessao so muda com fila, posicao, shuffle ou repeat. Estatisticas sao
        gravadas ao pausar/sair; o tick periodico acima permanece resume-only. */
-    if (a->session_dirty && !a->scan_busy && !persistence_busy()) {
+    if (a->session_dirty && !a->scan_busy && !a->save_retry_frames && !persistence_busy()) {
         if (persistence_submit_parts(&a->lib, &a->q, a->resume_path, a->resume_ms, 1, 0) == 0)
             a->session_dirty = 0;
     }
@@ -526,6 +539,7 @@ void app_init(App *a) {
 }
 
 void app_exit(App *a) {
+    a->quit = 1;
 #ifdef __3DS__
     /* O scan usa App e o SD: cancelar e aguardar antes de salvar/liberar tudo. */
     a->scan_abort = 1;

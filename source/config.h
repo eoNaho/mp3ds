@@ -1,7 +1,9 @@
 #pragma once
 /* Caminhos e constantes do app. Ajuste MUSIC_ROOT se sua musica estiver em outra pasta. */
 #define APP_NAME        "mp3ds"
+#ifndef DATA_DIR
 #define DATA_DIR        "sdmc:/3ds/mp3ds"
+#endif
 #define MUSIC_ROOT      "sdmc:/Music"
 #define INDEX_PATH      DATA_DIR "/library.idx"
 #define COVER_DIR       DATA_DIR "/covers"

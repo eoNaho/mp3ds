@@ -190,6 +190,7 @@ void player_exit(void) {
     ndspChnWaveBufClear(CH);
     /* O DSP precisa terminar antes de liberar os buffers que ele ainda pode ler. */
     ndspExit();
+    s_state = PS_STOPPED;
     for (int i = 0; i < NBUF; i++) if (pcm[i]) { linearFree(pcm[i]); pcm[i] = NULL; }
 }
 

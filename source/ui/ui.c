@@ -564,12 +564,19 @@ void ui_draw(App *a) {
     C3D_FrameEnd(0);
 }
 
-void ui_message(const char *l1, const char *l2) {
-    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+static void message(const char *l1, const char *l2, u8 flags) {
+    if (!C3D_FrameBegin(flags)) return;
     C2D_TextBufClear(s_buf);
     C2D_TargetClear(s_top, BG); C2D_SceneBegin(s_top);
     text_center(l1, TOP_W / 2.0f, 100, 0.6f, TXT);
     C2D_TargetClear(s_bot, BG); C2D_SceneBegin(s_bot);
     text_center(l2, BOT_W / 2.0f, 100, 0.45f, DIM);
     C3D_FrameEnd(0);
+}
+
+void ui_message(const char *l1, const char *l2) { message(l1, l2, C3D_FRAME_SYNCDRAW); }
+void ui_exit_message(void) {
+    GSPLCD_PowerOnBacklight(GSPLCD_SCREEN_BOTH);
+    /* Uma mensagem de saida nunca deve esperar VBlank ou GPU ocupada. */
+    message("Saindo...", "Salvando a fila e encerrando o audio", C3D_FRAME_NONBLOCK);
 }

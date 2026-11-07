@@ -4,6 +4,7 @@
 #include "util.h"
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 SaveState *save_state_capture(const Library *lib, const Queue *q,
                              const char *path, uint32_t ms, int index) {
@@ -36,8 +37,16 @@ void save_state_free(SaveState *s) {
 }
 
 int save_state_write(const SaveState *s, const char *session, const char *resume, const char *index) {
-    int rc = s->save_session ? session_save(session, &s->lib, &s->queue) : 0;
-    if (resume_save(resume, s->resume_path, s->resume_ms) != 0) rc = -1;
-    if (s->save_index && library_save_index(&s->lib, index) != 0) rc = -1;
-    return rc;
+    int failed = 0, error = 0;
+    if (s->save_session && session_save(session, &s->lib, &s->queue) != 0) {
+        failed |= SAVE_SESSION_ERROR; error = errno ? errno : EIO;
+    }
+    if (resume_save(resume, s->resume_path, s->resume_ms) != 0) {
+        failed |= SAVE_RESUME_ERROR; if (!error) error = errno ? errno : EIO;
+    }
+    if (s->save_index && library_save_index(&s->lib, index) != 0) {
+        failed |= SAVE_INDEX_ERROR; if (!error) error = errno ? errno : EIO;
+    }
+    if (error) errno = error;
+    return failed;
 }

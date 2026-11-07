@@ -116,7 +116,7 @@ static int push(Library *l, const Track *t) {
 }
 
 int library_load_index(Library *l, const char *p) {
-    FILE *f = fopen(p, "rb");
+    FILE *f = u_open_saved(p);
     if (!f) return -1;
     IdxHeader h;
     if (fread(&h, sizeof h, 1, f) != 1 || memcmp(h.magic, IDX_MAGIC, 4) ||
@@ -168,9 +168,7 @@ int library_save_index(const Library *l, const char *p) {
     h.version = IDX_VERSION; h.rec_size = sizeof(Track); h.count = (uint32_t)l->count;
     int ok = fwrite(&h, sizeof h, 1, f) == 1;
     if (ok && l->count) ok = fwrite(l->tracks, sizeof(Track), l->count, f) == (size_t)l->count;
-    if (fclose(f) != 0) ok = 0;
-    if (!ok || rename(tmp, p) != 0) { remove(tmp); return -1; }
-    return 0;
+    return u_commit_file(f, tmp, p, ok);
 }
 
 static int cmp_path(const void *a, const void *b) { return strcmp(((const Track *)a)->path, ((const Track *)b)->path); }

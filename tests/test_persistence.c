@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include "persistence.h"
 
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -21,7 +22,8 @@ int __wrap_save_state_write(const SaveState *s, const char *session, const char 
     assert(s->lib.count == 1 && !strcmp(s->lib.tracks[0].path, "faixa.mp3"));
     assert(queue_current(&s->queue) == 0);
     last_ms = s->resume_ms; last_index = s->save_index;
-    int rc = calls++ == 0 ? -1 : 0;
+    int rc = calls++ == 0 ? SAVE_SESSION_ERROR : 0;
+    if (rc) errno = ENOSPC;
     pthread_mutex_unlock(&mutex);
     return rc;
 }
@@ -50,7 +52,10 @@ int main(void) {
     persistence_exit();
     assert(calls == 2 && last_ms == 101 && last_index == 1);
     assert(!persistence_busy());
-    assert(persistence_take_error() == 1 && persistence_take_error() == 0);
+    int parts, code;
+    assert(persistence_take_error_detail(&parts, &code) == 1);
+    assert(parts == SAVE_SESSION_ERROR && code == ENOSPC);
+    assert(persistence_take_error() == 0);
     puts("ok persistence: SD lento, ultimo estado, erros e encerramento");
     return 0;
 }

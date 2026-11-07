@@ -63,7 +63,8 @@ void covers_exit(void) {
     if (s_th) { threadJoin(s_th, U64_MAX); threadFree(s_th); s_th = NULL; }
     if (s_done.has) free(s_done.data);
     free(s_req.paths); s_req.paths = NULL;
-    C3D_FrameSync();                    /* nenhuma textura ainda em uso pela GPU */
+    /* Espera a fila da GPU, sem depender dos callbacks de VBlank na saida. */
+    if (C3D_FrameBegin(0)) C3D_FrameEnd(0);
     for (int i = 0; i < COVER_LRU; i++) free_slot(&s_slot[i]);
 }
 

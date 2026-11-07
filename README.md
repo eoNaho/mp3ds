@@ -63,6 +63,10 @@ latência e consumo reais ainda precisam ser medidos em Old/New 3DS.
 O auto-save periódico grava somente `resume.txt`; sessão/fila são gravadas quando
 mudam, e o histórico ao pausar/sair. Com a tampa fechada ou as telas desligadas,
 o desenho é suspenso e o áudio continua.
+Erros de gravação identificam o arquivo e o código; as tentativas ficam espaçadas
+em cerca de 5 segundos. A substituição de estado usa `.bak`, recuperado se o
+arquivo principal estiver ausente após uma interrupção. Ao sair, a posição é
+capturada antes de encerrar o DSP, e a mensagem de saída não espera VBlank.
 
 ReplayGain continua opcional. A troca do JPEG para libjpeg-turbo com escala DCT
 fica para uma comparação de tempo/RAM no console antes de adicionar a dependência.

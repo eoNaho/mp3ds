@@ -13,3 +13,6 @@ tests/test_persistence
 tests/test_tap
 
 tests/test_player
+
+tests/test_fileio
+tests/test_app_save

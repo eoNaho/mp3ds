@@ -10,7 +10,7 @@
 int resume_load(const char *file, char *path, size_t cap, uint32_t *ms) {
     *ms = 0;
     if (path && cap) path[0] = 0;
-    FILE *f = fopen(file, "rb");
+    FILE *f = u_open_saved(file);
     if (!f) return -1;
     char line[64], p[TRACK_PATH_MAX + 2];
     unsigned long m;
@@ -33,7 +33,5 @@ int resume_save(const char *file, const char *path, uint32_t ms) {
     FILE *f = fopen(tmp, "wb");
     if (!f) return -1;
     int ok = fprintf(f, RESUME_FMT " %lu\n%s\n", (unsigned long)ms, path) >= 0;
-    if (fclose(f) != 0) ok = 0;
-    if (!ok || rename(tmp, file) != 0) { remove(tmp); return -1; }
-    return 0;
+    return u_commit_file(f, tmp, file, ok);
 }
