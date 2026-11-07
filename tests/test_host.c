@@ -20,6 +20,8 @@
 #include "texture.h"
 #include "save_state.h"
 #include "commands.h"
+#include "touch.h"
+#include "tap_confirm.h"
 
 #define M "fixtures/music"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FALHOU %s:%d  %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
@@ -506,6 +508,66 @@ static void t_cover(void) {
     puts("ok cover");
 }
 
+static void t_touch(void) {
+    CHECK(touch_control_at(45) == CTL_SHUFFLE);
+    CHECK(touch_control_at(96) == CTL_PREV);
+    CHECK(touch_control_at(156) == CTL_PLAY);
+    CHECK(touch_control_at(132) == CTL_PLAY && touch_control_at(180) == CTL_PLAY);
+    CHECK(touch_control_at(216) == CTL_NEXT);
+    CHECK(touch_control_at(203) == CTL_NEXT && touch_control_at(228) == CTL_NEXT);
+    CHECK(touch_control_at(254) == CTL_REPEAT);
+    CHECK(touch_control_at(296) == CTL_EQ);
+    int edges[] = {0, 70, 126, 186, 235, 275, 320};
+    for (int control = 0; control < CTL_N; control++)
+        for (int x = edges[control]; x < edges[control + 1]; x++)
+            CHECK(touch_control_at(x) == control);
+
+    TouchGesture g = {0};
+    CHECK(touch_end(&g) == 0);
+    CHECK(touch_drag(&g, 10, 20, 28) == 0 && !g.active);
+    touch_begin(&g, 100, 100);
+    CHECK(touch_drag(&g, 104, 106, 28) == 0);
+    CHECK(touch_drag(&g, 102, 108, 28) == 0);
+    CHECK(touch_end(&g) == 1 && g.x == 102 && g.y == 108);
+    CHECK(touch_end(&g) == 0);
+    touch_begin(&g, 100, 100);
+    CHECK(touch_drag(&g, 106, 108, 28) == 0 && !g.moved); /* raio exatamente 10 */
+    CHECK(touch_end(&g) == 1);
+    touch_begin(&g, 100, 100);
+    CHECK(touch_drag(&g, 108, 108, 28) == 0 && g.moved); /* diagonal fora do raio */
+    CHECK(touch_end(&g) == 0);
+
+    touch_begin(&g, 50, 100);
+    CHECK(touch_drag(&g, 90, 101, 28) == 0);
+    CHECK(touch_drag(&g, 140, 101, 28) == 0);
+    CHECK(touch_end(&g) == 0);
+    touch_begin(&g, 50, 150);
+    int total = 0, y = 150;
+    CHECK(touch_drag(&g, 50, y -= 12, 28) == 0);
+    for (int i = 0; i < 10; i++) total += touch_drag(&g, 50, y -= 14, 28);
+    CHECK(total == 5);
+    CHECK(touch_end(&g) == 0);
+    touch_begin(&g, 50, 50);
+    CHECK(touch_drag(&g, 50, 70, 28) == 0);
+    CHECK(touch_drag(&g, 50, 98, 28) == -1);
+    CHECK(touch_end(&g) == 0);
+    touch_begin(&g, 50, 50);
+    CHECK(touch_drag(&g, 50, 100, 0) == 0 && !g.moved && g.y == 50);
+    g.active = 0; /* acordar a tela consome o gesto */
+    CHECK(touch_end(&g) == 0);
+
+    /* O toque duplo usa as mesmas zonas que disparam os controles. */
+    TapConfirm confirm = {0};
+    CHECK(!tap_confirm(&confirm, 4, touch_control_at(203), 1000));
+    CHECK(tap_confirm(&confirm, 4, touch_control_at(228), 1200));
+    CHECK(!tap_confirm(&confirm, 4, touch_control_at(96), 1500));
+    touch_begin(&g, 100, 100); touch_drag(&g, 90, 80, 28);
+    if (g.moved) tap_confirm_reset(&confirm);
+    CHECK(!tap_confirm(&confirm, 4, touch_control_at(96), 1700));
+    CHECK(!tap_confirm(&confirm, 4, touch_control_at(216), 1800));
+    puts("ok touch: zonas, tolerancia, arrasto, soltura e toque duplo");
+}
+
 #include "test_regressions.inc"
 
 int main(void) {
@@ -513,7 +575,7 @@ int main(void) {
 #if ENABLE_FLAC
     t_flac();
 #endif
-    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playback_commands(); t_texture_tiles(); t_save_snapshot(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
+    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playback_commands(); t_texture_tiles(); t_save_snapshot(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover(); t_touch();
     t_unicode_and_index(); t_legacy_migration(); t_lookup_large(); t_cover_album_refresh(); t_gapless_stream(); t_resume_only();
     puts("TODOS OS TESTES PASSARAM");
     return 0;

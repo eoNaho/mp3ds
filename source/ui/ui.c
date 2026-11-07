@@ -9,6 +9,7 @@
 #include "player.h"
 #include "util.h"
 #include "tap_confirm.h"
+#include "touch.h"
 
 #define ROW_H    28
 #define ROWS     5
@@ -25,11 +26,13 @@ static u32 BG, PANEL, TXT, DIM, ACCENT0;
 static int s_actions_id = -1, s_a_consumed, s_search_open;
 static const char *SEARCH_FIELDS[] = {"Todos", "Titulo", "Artista", "Album", "Pasta"};
 static const char *SEARCH_PLAYS[] = {"Todas", "Nunca tocadas", "Ja tocadas"};
-static int t_down, t_sx, t_sy, t_ly, t_moved, t_acc;
+static TouchGesture s_tg;
 static TapConfirm s_tap;
 
 static void screens_power(App *a, int off) {
     a->screen_off = off;
+    s_tg.active = 0;
+    tap_confirm_reset(&s_tap);
     if (off) { app_save_resume(a); GSPLCD_PowerOffBacklight(GSPLCD_SCREEN_BOTH); }
     else GSPLCD_PowerOnBacklight(GSPLCD_SCREEN_BOTH);
 }
@@ -184,12 +187,13 @@ static void tap(App *a, int x, int y) {
     int list_play = y >= LIST_Y && y < LIST_Y + ROWS * ROW_H &&
                     row < list_count(a) &&
                     !((t == TAB_SONGS || t == TAB_FILA) && x >= BOT_W - 34);
-    int skip = y >= 176 && x >= 52 && x < 208 && x / 52 != 2;
+    int control = touch_control_at(x);
+    int skip = y >= 176 && (control == CTL_PREV || control == CTL_NEXT);
     int confirm = 0;
     if (!s_search_open && s_actions_id < 0 &&
         !(s_eq_open && y >= 134 && y < 176) && (list_play || skip))
         confirm = tap_confirm(&s_tap, list_play ? t : TAB_N,
-                              list_play ? row : x / 52, osGetTime());
+                              list_play ? row : control, osGetTime());
     else tap_confirm_reset(&s_tap);
     if (s_search_open) {
         if (y >= 34 && y < 74) search_action(a, 0);
@@ -240,13 +244,13 @@ static void tap(App *a, int x, int y) {
             }
         }
     } else if (y >= 176) {
-        if (x >= 274) s_eq_open = !s_eq_open;                     /* abre/fecha o painel do EQ */
-        else switch (x / 52) {
-            case 0: app_toggle_shuffle(a); break;
-            case 1: if (confirm) app_prev(a); else app_toast(a, "Toque duas vezes para voltar"); break;
-            case 2: app_toggle_pause(a); break;
-            case 3: if (confirm) app_next(a, 1); else app_toast(a, "Toque duas vezes para avancar"); break;
-            default: app_cycle_repeat(a); break;
+        switch (control) {
+            case CTL_SHUFFLE: app_toggle_shuffle(a); break;
+            case CTL_PREV: if (confirm) app_prev(a); else app_toast(a, "Toque duas vezes para voltar"); break;
+            case CTL_PLAY: app_toggle_pause(a); break;
+            case CTL_NEXT: if (confirm) app_next(a, 1); else app_toast(a, "Toque duas vezes para avancar"); break;
+            case CTL_REPEAT: app_cycle_repeat(a); break;
+            default: s_eq_open = !s_eq_open; break;
         }
     }
 }
@@ -259,7 +263,7 @@ int ui_input(App *a) {
 
     if (kd & KEY_START) { a->quit = 1; return 1; }
     if (kd & ~KEY_TOUCH) tap_confirm_reset(&s_tap);
-    if (a->screen_off) { tap_confirm_reset(&s_tap); if (kd) screens_power(a, 0); return 1; }   /* qualquer toque/botao acorda */
+    if (a->screen_off) { s_tg.active = 0; tap_confirm_reset(&s_tap); if (kd) screens_power(a, 0); return 1; }   /* qualquer toque/botao acorda */
 
     if (s_search_open && a->scan_busy) s_search_open = 0;
     if (s_search_open) {
@@ -268,8 +272,12 @@ int ui_input(App *a) {
         else if (kd & KEY_A) search_action(a, 0);
         else if (kd & KEY_X) search_action(a, 1);
         else if (kd & KEY_Y) search_action(a, 2);
-        if (kd & KEY_TOUCH) { t_down = 1; t_sx = tp.px; t_sy = tp.py; }
-        if ((ku & KEY_TOUCH) && t_down) { t_down = 0; tap(a, t_sx, t_sy); }
+        if (kd & KEY_TOUCH) touch_begin(&s_tg, tp.px, tp.py);
+        else if ((kh & KEY_TOUCH) && s_tg.active) {
+            touch_drag(&s_tg, tp.px, tp.py, ROW_H);
+            if (s_tg.moved) tap_confirm_reset(&s_tap);
+        }
+        if ((ku & KEY_TOUCH) && touch_end(&s_tg)) tap(a, s_tg.x, s_tg.y);
         return dirty;
     }
     if (kd & KEY_SELECT) {
@@ -325,23 +333,22 @@ int ui_input(App *a) {
     if (s_eq_open && (kd & (KEY_B | KEY_A | KEY_X | KEY_Y))) s_eq_open = 0;
     clamp_view(a);
 
-    if (kd & KEY_TOUCH) { t_down = 1; t_sx = tp.px; t_sy = t_ly = tp.py; t_moved = 0; t_acc = 0; }
-    else if ((kh & KEY_TOUCH) && t_down) {
-        if (abs((int)tp.py - t_sy) > 6 || abs((int)tp.px - t_sx) > 6) {
-            t_moved = 1;
-            tap_confirm_reset(&s_tap);
-        }
-        if (t_moved && t_sy >= LIST_Y && t_sy < LIST_Y + ROWS * ROW_H) {   /* arrastar rola a lista por linhas */
-            t_acc += (int)tp.py - t_ly;
-            while (t_acc >= ROW_H)  { a->top[t]--; t_acc -= ROW_H; }
-            while (t_acc <= -ROW_H) { a->top[t]++; t_acc += ROW_H; }
+    if (kd & KEY_TOUCH) touch_begin(&s_tg, tp.px, tp.py);
+    else if ((kh & KEY_TOUCH) && s_tg.active) {
+        int rows = touch_drag(&s_tg, tp.px, tp.py, ROW_H);
+        if (s_tg.moved) tap_confirm_reset(&s_tap);
+        if (rows && s_actions_id < 0 && s_tg.sy >= LIST_Y &&
+            s_tg.sy < LIST_Y + ROWS * ROW_H && !(s_eq_open && s_tg.sy >= 134)) {
             int n = list_count(a), mt = n > ROWS ? n - ROWS : 0;
+            a->top[t] += rows;
             if (a->top[t] < 0) a->top[t] = 0;
             if (a->top[t] > mt) a->top[t] = mt;
+            /* A selecao acompanha a janela para clamp_view nao desfazer o arrasto. */
+            if (a->sel[t] < a->top[t]) a->sel[t] = a->top[t];
+            if (a->sel[t] >= a->top[t] + ROWS) a->sel[t] = a->top[t] + ROWS - 1;
         }
-        t_ly = tp.py;
     }
-    if ((ku & KEY_TOUCH) && t_down) { t_down = 0; if (!t_moved) tap(a, t_sx, t_sy); }
+    if ((ku & KEY_TOUCH) && touch_end(&s_tg)) tap(a, s_tg.x, s_tg.y);
     clamp_view(a);
     return dirty;
 }

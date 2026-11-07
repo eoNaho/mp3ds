@@ -95,7 +95,11 @@ e `last_played`; índices antigos são migrados automaticamente para o formato v
 | EQ (rodapé) | abre painel com 6 presets (Desligado / Sub / Graves / Voz / Brilho / Suave); toque um preset (voltinhas são o perfil de frequência) |
 | Toque na lista | um toque seleciona; dois toques na mesma linha em até 450 ms abrem/tocam |
 | Anterior / próxima na tela | dois toques em até 450 ms; L / R continuam imediatos |
-| Arrastar | rolar a lista (cancela o toque duplo pendente) |
+| Arrastar | rolar a lista; a seleção acompanha a janela e o toque duplo pendente é cancelado |
+
+Os controles de toque seguem as áreas dos ícones. Gestos toleram até 10 px de
+movimento; um toque usa a última posição válida antes de soltar o dedo. Arrastar
+no painel de busca ou no popup da fila não aciona botões nem rola a lista ao fundo.
 
 A busca combina todas as palavras digitadas, em qualquer ordem, ignorando caixa e
 acentos: `cronicas entender` encontra uma faixa com “Crônicas” no artista e
