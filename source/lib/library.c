@@ -1,0 +1,175 @@
+#include "library.h"
+#include "id3.h"
+#include "mp3info.h"
+#include "util.h"
+#include <dirent.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+
+#define IDX_MAGIC "M3DX"
+#define IDX_VERSION 1
+#define MAX_DEPTH 16
+
+typedef struct { char magic[4]; uint32_t version, rec_size, count; } IdxHeader;
+
+void library_free(Library *l) { free(l->tracks); memset(l, 0, sizeof *l); }
+
+static int push(Library *l, const Track *t) {
+    if (l->count == l->cap) {
+        int nc = l->cap ? l->cap * 2 : 256;
+        Track *n = realloc(l->tracks, sizeof(Track) * nc);
+        if (!n) return -1;
+        l->tracks = n; l->cap = nc;
+    }
+    l->tracks[l->count++] = *t;
+    return 0;
+}
+
+int library_load_index(Library *l, const char *p) {
+    FILE *f = fopen(p, "rb");
+    if (!f) return -1;
+    IdxHeader h;
+    if (fread(&h, sizeof h, 1, f) != 1 || memcmp(h.magic, IDX_MAGIC, 4) || h.version != IDX_VERSION || h.rec_size != sizeof(Track)) { fclose(f); return -2; }
+    library_free(l);
+    l->tracks = malloc(sizeof(Track) * (h.count ? h.count : 1));
+    if (!l->tracks) { fclose(f); return -3; }
+    l->cap = (int)(h.count ? h.count : 1);
+    l->count = (int)fread(l->tracks, sizeof(Track), h.count, f);
+    fclose(f);
+    return 0;
+}
+
+int library_save_index(const Library *l, const char *p) {
+    FILE *f = fopen(p, "wb");
+    if (!f) return -1;
+    IdxHeader h; memcpy(h.magic, IDX_MAGIC, 4);
+    h.version = IDX_VERSION; h.rec_size = sizeof(Track); h.count = (uint32_t)l->count;
+    fwrite(&h, sizeof h, 1, f);
+    fwrite(l->tracks, sizeof(Track), l->count, f);
+    fclose(f);
+    return 0;
+}
+
+static int cmp_path(const void *a, const void *b) { return strcmp(((const Track *)a)->path, ((const Track *)b)->path); }
+
+static int cmp_sort(const void *pa, const void *pb) {
+    const Track *a = pa, *b = pb; int r;
+    if ((r = strcasecmp(a->artist, b->artist))) return r;
+    if ((r = strcasecmp(a->album, b->album))) return r;
+    if (a->track != b->track) return a->track < b->track ? -1 : 1;
+    return strcasecmp(a->title, b->title);
+}
+
+void library_sort(Library *l) { if (l->count > 1) qsort(l->tracks, l->count, sizeof(Track), cmp_sort); }
+
+int library_find_path(const Library *l, const char *path) {
+    for (int i = 0; i < l->count; i++) if (!strcmp(l->tracks[i].path, path)) return i;
+    return -1;
+}
+
+int library_search(const Library *l, const char *query, int *out, int max) {
+    char q[128];
+    u_norm_ascii(q, sizeof q, query);
+    int n = 0;
+    if (!q[0]) return 0;
+    for (int i = 0; i < l->count && n < max; i++) {
+        char f[128];
+        u_norm_ascii(f, sizeof f, l->tracks[i].title);   if (strstr(f, q))   { out[n++] = i; continue; }
+        u_norm_ascii(f, sizeof f, l->tracks[i].artist); if (strstr(f, q))   { out[n++] = i; continue; }
+        u_norm_ascii(f, sizeof f, l->tracks[i].album);  if (l->tracks[i].album[0] && strstr(f, q)) out[n++] = i;
+    }
+    return n;
+}
+
+int library_build_albums(const Library *l, AlbumGroup *out, int max) {
+    int n = 0;
+    memset(out, 0, sizeof(AlbumGroup) * (size_t)max);
+    for (int i = 0; i < l->count; i++) {
+        const Track *t = &l->tracks[i];
+        int same = n > 0 && !strcasecmp(out[n - 1].artist, t->artist) && !strcasecmp(out[n - 1].album, t->album);
+        if (same) { out[n - 1].count++; continue; }
+        if (n >= max) break;
+        u_copy(out[n].artist, sizeof out[n].artist, t->artist);
+        u_copy(out[n].album, sizeof out[n].album, t->album);
+        out[n].art_key = t->art_key;
+        out[n].first = i; out[n].count = 1;
+        n++;
+    }
+    return n;
+}
+
+static int is_mp3(const char *n) { size_t a = strlen(n); return a > 4 && !strcasecmp(n + a - 4, ".mp3"); }
+
+static void dir_of(const char *path, char *out, size_t cap) {
+    u_copy(out, cap, path);
+    char *s = strrchr(out, '/'); if (s) *s = 0;
+}
+
+static int build_track(const char *path, const struct stat *st, Track *t) {
+    Id3Info id; Mp3Info mi;
+    if (id3_read(path, &id) != 0) return -1;
+    if (mp3info_probe(path, id.audio_start, &mi) != 0) return -1;   /* nao e MP3 tocavel */
+    memset(t, 0, sizeof *t);
+    u_copy(t->path, sizeof t->path, path);
+    if (id.title[0]) u_copy(t->title, sizeof t->title, id.title);
+    else {
+        const char *b = strrchr(path, '/'); b = b ? b + 1 : path;
+        u_copy(t->title, sizeof t->title, b);
+        char *dot = strrchr(t->title, '.'); if (dot) *dot = 0;
+    }
+    u_copy(t->artist, sizeof t->artist, id.artist[0] ? id.artist : "Desconhecido");
+    u_copy(t->album, sizeof t->album, id.album[0] ? id.album : "");
+    t->track = (uint32_t)id.track; t->duration_ms = mi.duration_ms;
+    t->size = (uint32_t)st->st_size; t->mtime = (int64_t)st->st_mtime;
+    if (id.album[0]) { char k[200]; snprintf(k, sizeof k, "%s\x1f%s", t->album, t->artist); t->art_key = u_fnv1a(k); }
+    else { char d[256]; dir_of(path, d, sizeof d); t->art_key = u_fnv1a(d); }
+    return 0;
+}
+
+typedef struct {
+    Library *out; const Track *old; int nold;
+    ScanProgress cb; void *ud; int abort, parsed;
+    Track key, tmp;   /* buffers compartilhados: evita ~1 KB de pilha por nivel de recursao (pilha do 3DS e pequena) */
+} Scan;
+
+static void walk(Scan *s, const char *dir, int depth) {
+    if (depth > MAX_DEPTH || s->abort) return;
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while (!s->abort && (e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        char p[256];
+        if (snprintf(p, sizeof p, "%s/%s", dir, e->d_name) >= (int)sizeof p) continue;
+        struct stat st;
+        if (stat(p, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) { walk(s, p, depth + 1); continue; }
+        if (!is_mp3(e->d_name)) continue;
+
+        u_copy(s->key.path, sizeof s->key.path, p);
+        const Track *o = s->nold ? bsearch(&s->key, s->old, s->nold, sizeof(Track), cmp_path) : NULL;
+        if (o && o->size == (uint32_t)st.st_size && o->mtime == (int64_t)st.st_mtime) s->tmp = *o;
+        else { if (build_track(p, &st, &s->tmp) != 0) continue; s->parsed++; }
+        push(s->out, &s->tmp);
+        if (s->cb && s->cb(s->out->count, p, s->ud)) s->abort = 1;
+    }
+    closedir(d);
+}
+
+int library_scan(Library *l, const char *root, ScanProgress cb, void *ud) {
+    Library fresh = {0};
+    Track *old = l->tracks; int nold = l->count;
+    if (nold > 1) qsort(old, nold, sizeof(Track), cmp_path);
+    Scan s;                       /* uma unica instancia (~1 KB); a recursao so recebe o ponteiro */
+    memset(&s, 0, sizeof s);
+    s.out = &fresh; s.old = old; s.nold = nold; s.cb = cb; s.ud = ud;
+    walk(&s, root, 0);
+    free(l->tracks);
+    *l = fresh;
+    l->last_parsed = s.parsed;
+    library_sort(l);
+    return s.abort ? 1 : 0;
+}
