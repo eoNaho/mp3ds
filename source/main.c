@@ -41,16 +41,16 @@ int main(void) {
 
     static App app;
     app_init(&app);
-    if (app.lib.count == 0) app_rescan(&app, on_scan, NULL);
+    if (app.lib.count == 0) app_rescan(&app, on_scan, NULL);   /* primeiro uso: sincronico com tela de progresso */
 
     int redraw = 2;   /* 2 frames: as telas do 3DS tem buffer duplo */
     while (aptMainLoop() && !app.quit) {
         if (ui_input(&app)) redraw = 2;
         app_tick(&app);
-        if (app.want_rescan) { app.want_rescan = 0; app_rescan(&app, on_scan, NULL); redraw = 2; }
+        if (app.want_rescan) { app.want_rescan = 0; app_start_rescan(&app); redraw = 2; }   /* reescaneia em thread */
         if (covers_pump()) redraw = 2;
 
-        if (redraw > 0 || player_state() == PS_PLAYING || app.toast_frames > 0) {
+        if (redraw > 0 || player_state() == PS_PLAYING || app.toast_frames > 0 || app.scan_busy) {
             ui_draw(&app);
             if (redraw > 0) redraw--;
         } else {

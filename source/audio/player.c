@@ -28,14 +28,18 @@ static volatile int      s_finished;      /* 0, 1 = fim, -1 = erro */
 static volatile uint32_t s_dur, s_base_ms, s_hz = 44100, s_last_frames;
 static Viz s_viz;
 
+typedef struct { const char *name; float f0, q, gain; } EqPreset;
+
 /* equalizador: pico IIR do DSP (gain bruto = 10^(dB/40)) */
 static int s_eq_preset;
-static const struct { const char *name; float f0, q, gain; } s_eq[EQ_N] = {
+static const EqPreset s_eq[EQ_N] = {
     { "Desligado",     0.0f, 1.0f, 1.0f    },
     { "Graves",       90.0f, 1.4f, 1.4125f },   /* +6 dB em 90 Hz  */
     { "Voz"  ,      2000.0f, 1.2f, 1.2589f },   /* +4 dB em 2 kHz  */
     { "Brilho",     9000.0f, 1.2f, 1.2589f },   /* +4 dB em 9 kHz  */
 };
+
+void player_eq_apply(void);
 
 static void on_frame(void *unused) { (void)unused; LightEvent_Signal(&s_ev); }
 
@@ -198,7 +202,7 @@ void player_get_viz(Viz *out) {
 
 void player_eq_apply(void) {
     if (s_eq_preset <= 0 || s_eq_preset >= EQ_N) { ndspChnIirBiquadSetEnable(CH, false); return; }
-    const struct { const char *name; float f0, q, gain; } *p = &s_eq[s_eq_preset];
+    const EqPreset *p = &s_eq[s_eq_preset];
     ndspChnIirBiquadSetParamsPeakingEqualizer(CH, p->f0, p->q, p->gain);
     ndspChnIirBiquadSetEnable(CH, true);
 }

@@ -55,4 +55,16 @@ write(p, d + tag)
 # 5) lixo: nao-MP3 com extensao .mp3 e um .txt
 write(out + "/quebrado.mp3", b"isto nao e um mp3" * 100)
 write(out + "/notas.txt", b"ignorar")
+
+# 6) Xing + TOC (frame-info manual antes de um MP3 CBR): serve para testar seek pela tabela
+p = out + "/xingtoc.mp3"
+d = sine_mp3()                                # 2 s CBR 128 kbps estereo 44,1 kHz
+fsize = 144 * 128 * 1000 // 44100             # tamanho tipico do frame (sem padding)
+frames = len(d) // fsize
+toc = bytes(round(255 * k / 100) for k in range(100))
+xing = (b"Xing" + struct.pack(">I", 0x7) + struct.pack(">I", frames)
+        + struct.pack(">I", frames * fsize) + toc + struct.pack(">I", 0))
+info = d[:4] + b"\x00" * 32 + xing            # header do 1o frame + side info MPEG1 stereo
+pad = fsize - len(info)
+write(p, info + b"\x00" * pad + d)
 print("fixtures ok em", out)

@@ -10,6 +10,7 @@
 #include "viz.h"
 #include "queue.h"
 #include "playlist.h"
+#include "resume.h"
 #include "library.h"
 #include "cover.h"
 #include "util.h"
@@ -24,7 +25,62 @@ static void t_util(void) {
     u_utf8_trunc(b, sizeof b, "curto", 8);
     CHECK(!strcmp(b, "curto"));
     CHECK(u_fnv1a("a") != u_fnv1a("b"));
+    u_norm_ascii(b, sizeof b, "Ñandú ACEÇÃO");
+    CHECK(!strcmp(b, "nandu acecao"));
+    u_norm_ascii(b, sizeof b, "A  B\t  c!");
+    CHECK(!strcmp(b, "a b c"));
+    u_norm_ascii(b, sizeof b, "42 km/h");
+    CHECK(!strcmp(b, "42 km h"));
     puts("ok util");
+}
+
+/* busca no biblioteca e grupos de album */
+static void t_search_albums(void) {
+    Library l = {0};
+    CHECK(library_scan(&l, M, NULL, NULL) == 0);
+    int out[16]; int n;
+    n = library_search(&l, "nandu", out, 16);            /* sem acento: acha Artista Ñandú */
+    CHECK(n == 2);                                       /* 2 faixas do Album A */
+    n = library_search(&l, "ÑÃNDU", out, 16);            /* com acento: mesma resposta */
+    CHECK(n == 2);
+    n = library_search(&l, "segunda", out, 16);
+    CHECK(n == 1); CHECK(!strcmp(l.tracks[out[0]].title, "Segunda Faixa"));
+    n = library_search(&l, "v1", out, 16);
+    CHECK(n == 1);                                       /* Titulo V1 (ID3v1) */
+    n = library_search(&l, "", out, 16);
+    CHECK(n == 0);                                       /* query vazia: nada */
+    n = library_search(&l, "zzzzzz", out, 16);
+    CHECK(n == 0);
+
+    /* nao achado em album sem nome: a busca casa em titulo/artista/album */
+    AlbumGroup al[16]; int k = library_build_albums(&l, al, 16);
+    CHECK(k >= 2);                                       /* Album A (2 faixas) e os soltos */
+    int found = -1;
+    for (int i = 0; i < k; i++)
+        if (!strcasecmp(al[i].album, "Álbum A")) found = i;
+    CHECK(found >= 0);
+    CHECK(al[found].count == 2 && al[found].first + al[found].count <= l.count);
+    CHECK(!strcasecmp(al[found].artist, "Artista Ñandú"));
+    for (int i = 1; i < k; i++)                          /* grupos ordenados e disjuntos */
+        CHECK(al[i].first >= al[i - 1].first + al[i - 1].count);
+    library_free(&l);
+    puts("ok search/albums");
+}
+
+/* estado de retomada ida e volta */
+static void t_resume(void) {
+    system("rm -rf fixtures/rz; mkdir -p fixtures/rz");
+    const char *f = "fixtures/rz/resume.txt";
+    char p[256]; uint32_t ms;
+    CHECK(resume_load(f, p, sizeof p, &ms) != 0);        /* sem arquivo */
+    CHECK(resume_save(f, "sdmc:/Musica/a.mp3", 99000) == 0);
+    CHECK(resume_load(f, p, sizeof p, &ms) == 0);
+    CHECK(ms == 99000 && !strcmp(p, "sdmc:/Musica/a.mp3"));
+    CHECK(resume_save(f, "sdmc:/Musica/b.mp3", 123) == 0);   /* sobrescreve */
+    CHECK(resume_load(f, p, sizeof p, &ms) == 0 && ms == 123 && !strcmp(p, "sdmc:/Musica/b.mp3"));
+    CHECK(resume_save(f, p, 0) == 0);                    /* apaga */
+    CHECK(resume_load(f, p, sizeof p, &ms) != 0);
+    puts("ok resume");
 }
 
 static void t_id3(void) {
@@ -87,6 +143,29 @@ static void t_decoder(void) {
     puts("ok decoder");
 }
 
+/* seek pela tabela Xing TOC (fixture com frame-info manual; CBR linear) */
+static void t_decoder_xing(void) {
+    Id3Info id; Mp3Info mi;
+    CHECK(id3_read(M "/xingtoc.mp3", &id) == 0);
+    CHECK(mp3info_probe(M "/xingtoc.mp3", id.audio_start, &mi) == 0);
+    CHECK(mi.has_toc == 1);
+    CHECK(mi.duration_ms > 1800 && mi.duration_ms < 2300);
+    Decoder *d = decoder_open(M "/xingtoc.mp3");
+    CHECK(d); CHECK(decoder_sample_rate(d) == 44100);
+    static int16_t buf[4096 * 2];
+    long after = 0, n; double secs;
+    decoder_seek_ms(d, mi.duration_ms / 2);
+    while ((n = decoder_read(d, buf, 4096)) > 0) after += n;
+    secs = after / (double)mi.sample_rate;
+    CHECK(secs > 0.70 && secs < 1.30);                          /* ~metade da duracao */
+    decoder_seek_ms(d, 0);
+    long total = 0; while ((n = decoder_read(d, buf, 4096)) > 0) total += n;
+    secs = total / (double)mi.sample_rate;
+    CHECK(secs > 1.9 && secs < 2.35);                           /* faixa inteira */
+    decoder_close(d);
+    puts("ok decoder xing");
+}
+
 static void t_viz(void) {
     Decoder *d = decoder_open(M "/Album A/01 - Cancao Teste.mp3");
     static int16_t buf[2048 * 2];
@@ -144,7 +223,7 @@ static int on_prog(int found, const char *cur, void *ud) { (void)cur; (void)ud; 
 static void t_library(void) {
     Library l = {0};
     CHECK(library_scan(&l, M, on_prog, NULL) == 0);
-    CHECK(l.count == 4); CHECK(g_progress == 4); CHECK(l.last_parsed == 4);   /* quebrado.mp3 e .txt ficam de fora */
+    CHECK(l.count == 5); CHECK(g_progress == 5); CHECK(l.last_parsed == 5);   /* quebrado.mp3 e .txt ficam de fora */
     CHECK(!strcasecmp(l.tracks[0].artist, "Artista Ñandú") || l.tracks[0].artist[0]);
     int i = -1; for (int k = 0; k < l.count; k++) if (!strcmp(l.tracks[k].title, "Canção Teste")) i = k;
     CHECK(i >= 0); CHECK(l.tracks[i].track == 3); CHECK(l.tracks[i].duration_ms > 1900);
@@ -160,7 +239,7 @@ static void t_library(void) {
     Library l2 = {0}; CHECK(library_load_index(&l2, "fixtures/lib.idx") == 0);
     CHECK(l2.count == l.count && !memcmp(l2.tracks, l.tracks, sizeof(Track) * l.count));
     CHECK(library_scan(&l2, M, NULL, NULL) == 0);
-    CHECK(l2.count == 4 && l2.last_parsed == 0);                 /* incremental: nada releu */
+    CHECK(l2.count == 5 && l2.last_parsed == 0);                 /* incremental: nada releu */
     CHECK(library_find_path(&l2, l.tracks[i].path) >= 0); CHECK(library_find_path(&l2, "nao/existe") == -1);
     library_free(&l); library_free(&l2);
     puts("ok library");
@@ -184,7 +263,7 @@ static void t_cover(void) {
 }
 
 int main(void) {
-    t_util(); t_id3(); t_mp3info(); t_decoder(); t_viz(); t_queue(); t_playlist(); t_library(); t_cover();
+    t_util(); t_id3(); t_mp3info(); t_decoder(); t_decoder_xing(); t_viz(); t_queue(); t_playlist(); t_library(); t_search_albums(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

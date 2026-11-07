@@ -99,15 +99,14 @@ int decoder_read(Decoder *d, int16_t *out, int max) {
 /* ms -> offset de byte dentro da regiao de audio: usa a TOC do Xing quando existir */
 static long byte_for_ms(const Decoder *d, uint32_t ms) {
     if (d->dur == 0) return 0;
-    uint64_t f = (uint64_t)ms * 256 / d->dur;             /* fracao * 256 */
     if (d->has_toc) {
-        int k = (int)(f >> 8);                            /* amostra de 1% */
-        if (k < 0) k = 0;
-        if (k > 99) k = 99;
+        uint32_t p = (uint32_t)((uint64_t)ms * 100 / d->dur);          /* posicao em % : 0..100 */
+        int k = (p >= 100) ? 99 : (int)p;
+        uint32_t r = (uint32_t)((uint64_t)ms * 100 % d->dur);          /* avanço dentro do intervalo */
         int b0 = d->toc[k], b1 = k < 99 ? d->toc[k + 1] : 255;
         if (b1 < b0) b1 = b0;
-        int v = b0 + (int)((uint64_t)(b1 - b0) * (f & 255) / 256);
-        return (long)(d->audio_bytes * (uint64_t)v >> 8);
+        int v = b0 + (int)((uint64_t)(b1 - b0) * r / d->dur);
+        return (long)((uint64_t)d->audio_bytes * (uint64_t)v / 256);
     }
     return (long)((uint64_t)d->audio_bytes * ms / d->dur);
 }

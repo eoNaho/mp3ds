@@ -6,6 +6,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef __3DS__
+#include <3ds.h>
+/* New 3DS: clock cheia durante a decodificacao/reducao da capa (por thread) */
+#define SPEEDUP_ON()  osSetSpeedupEnable(true)
+#define SPEEDUP_OFF() osSetSpeedupEnable(false)
+#else
+#define SPEEDUP_ON()  ((void)0)
+#define SPEEDUP_OFF() ((void)0)
+#endif
+
 #define MAX_ART_BYTES   (3 * 1024 * 1024)
 #define MAX_ART_PIXELS  (2500 * 1000)   /* limite de RAM durante a decodificacao */
 
@@ -87,6 +97,7 @@ int cover_ensure(const char *cache_dir, uint32_t key, const char *track) {
     if (f) { CvrHeader h; int ok = fread(&h, sizeof h, 1, f) == 1; fclose(f); if (ok) return memcmp(h.magic, "CVR1", 4) == 0 ? 0 : 1; }
 
     int w = 0, h = 0;
+    SPEEDUP_ON();
     uint8_t *px = load_embedded(track, &w, &h);
     if (!px) px = load_folder_art(track, &w, &h);
 
@@ -97,6 +108,7 @@ int cover_ensure(const char *cache_dir, uint32_t key, const char *track) {
         if (cd) { shrink(px, w, h, cd); memcpy(hd.magic, "CVR1", 4); hd.w = hd.h = COVER_SIZE; hd.accent = cd->accent; }
         stbi_image_free(px);
     }
+    SPEEDUP_OFF();
     u_mkdir_p(cache_dir);
     f = fopen(cp, "wb");
     if (!f) { free(cd); return -1; }

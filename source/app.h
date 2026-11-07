@@ -46,6 +46,9 @@ void app_set_filter(App *a, const char *query);         /* "" limpa o filtro */
 /* TAB_ALBUMS: lista de albuns (artista + album) */
 void app_play_album(App *a, int group);
 
+/* toca a partir de id; sob filtro a fila = resultados da busca, senao a biblioteca inteira */
+void app_play_from(App *a, int id);
+
 void app_play_library_from(App *a, int idx);            /* fila = biblioteca inteira, comecando em idx */
 void app_open_playlist(App *a, int i);
 void app_save_queue_playlist(App *a);
