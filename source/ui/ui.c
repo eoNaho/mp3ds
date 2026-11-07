@@ -169,7 +169,9 @@ static void tap(App *a, int x, int y) {
         else if (x < 210) { a->tab = TAB_PLAYLISTS; app_refresh_playlists(a); }
         else if (x >= 282) screens_power(a, 1);
         else if (x >= 210 && x < 245) app_cycle_sort(a);
-        else if (x >= 245 && x < 282 && t == TAB_SONGS) {
+        /* A lupa ocupa uma area um pouco maior que o desenho para facilitar
+           o toque no 3DS; o texto da ordenacao continua na parte esquerda. */
+        else if (x >= 238 && x < 286 && t == TAB_SONGS) {
             if (a->query[0]) { app_set_filter(a, ""); a->sel[TAB_SONGS] = a->top[TAB_SONGS] = 0; }
             else ask_query(a);
         }
@@ -336,7 +338,7 @@ static void draw_bottom(App *a) {
     char b[160], c[96];
     if (t == TAB_SONGS && n == 0) {
         text_center(a->query[0] ? "Nada encontrado" : "Biblioteca vazia", BOT_W / 2.0f, 80, 0.5f, DIM);
-        if (!a->query[0]) text_center("Coloque MP3 em sdmc:/Music", BOT_W / 2.0f, 106, 0.4f, DIM);
+        if (!a->query[0]) text_center("Coloque MP3/FLAC em sdmc:/Music", BOT_W / 2.0f, 106, 0.4f, DIM);
     } else if (t == TAB_FILA && n == 0) {
         text_center("Fila vazia", BOT_W / 2.0f, 70, 0.5f, DIM);
         text_center("Toque uma faixa na aba Musicas", BOT_W / 2.0f, 96, 0.4f, DIM);

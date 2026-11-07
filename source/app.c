@@ -49,9 +49,14 @@ static void rebuild_view(App *a) {
     if (a->lib.count <= 0) return;
     a->view_ids = malloc(sizeof(int) * (size_t)a->lib.count);
     if (!a->view_ids) return;
-    if (a->filt) {
-        memcpy(a->view_ids, a->filt, sizeof(int) * (size_t)a->nfilt);
-        a->nview = a->nfilt;
+    if (a->query[0]) {
+        /* Uma busca sem resultados mantem filt == NULL. Nesse caso a lista
+           visivel precisa continuar vazia, e nao voltar a mostrar a
+           biblioteca inteira. */
+        if (a->filt && a->nfilt > 0) {
+            memcpy(a->view_ids, a->filt, sizeof(int) * (size_t)a->nfilt);
+            a->nview = a->nfilt;
+        }
     } else {
         for (int i = 0; i < a->lib.count; i++) a->view_ids[i] = i;
         a->nview = a->lib.count;
@@ -183,7 +188,8 @@ void app_play_library_from(App *a, int idx) {
 
 void app_play_from(App *a, int id) {
     if (a->scan_busy) return;
-    if (a->filt) {
+    if (a->query[0]) {
+        if (!a->filt || a->nfilt <= 0) return;
         int row = app_id_to_row(a, id);
         if (row >= 0) { app_play_ids(a, a->filt, a->nfilt, row); return; }
     }
