@@ -26,6 +26,7 @@ Sem instalar nada: dê push no GitHub; o workflow `.github/workflows/build.yml` 
 - `dspfirm.cdc` dumpado (app **DSP1**), senão o `ndsp` não inicia — o app avisa na tela.
 - MP3 em `sdmc:/Music` (mude `MUSIC_ROOT` em `source/config.h`).
 - Dados do app em `sdmc:/3ds/mp3ds/` (`library.idx`, `covers/`, `playlists/*.m3u`, `resume.txt`).
+- Durante a reprodução, fechar a tampa mantém a música tocando; ao pausar ou parar, a suspensão volta a ser permitida.
 
 O estado de retomada (`resume.txt`) guarda a última faixa e posição: ao abrir de novo
 e tocar a mesma faixa, ela começa de onde parou.
@@ -39,11 +40,14 @@ e tocar a mesma faixa, ela começa de onde parou.
 | ←/→ | -10 s / +10 s |
 | L / R | anterior / próxima |
 | X / Y | shuffle / repeat |
-| SELECT | alternar Músicas ↔ Álbuns ↔ Playlists |
+| SELECT | alternar Músicas ↔ Fila ↔ Álbuns ↔ Playlists |
 | START | sair |
+| Fila: A / toque | tocar a partir do slot escolhido |
+| Fila: X ou ✕ na borda | remover da fila |
+| Fila: ←/→ | mover ±1 posição (a faixa tocando acompanha) |
 | 🔍 (cabeçalho) | abrir teclado do 3DS e filtrar a lista por título/artista/álbum; ✕ limpa o filtro (a fila passa a ser o resultado da busca) |
 | 🌙 ou qualquer botão/tecla | desliga/religa as telas |
-| EQ (rodapé) | cicla o equalizador: Desligado / Graves / Voz / Brilho |
+| EQ (rodapé) | abre painel com 6 presets (Desligado / Sub / Graves / Voz / Brilho / Suave); toque um preset (voltinhas são o perfil de frequência) |
 | Toque | tocar na lista, arrastar para rolar, botões embaixo |
 
 ## Testes no PC

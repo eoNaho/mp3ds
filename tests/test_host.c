@@ -199,6 +199,40 @@ static void t_queue(void) {
     puts("ok queue");
 }
 
+/* professorenta da fila: remover/mover por slot de reproducao */
+static void t_queue_slots(void) {
+    Queue q; queue_init(&q, 3);
+    int ids[4] = {10, 20, 30, 40};
+    queue_set(&q, ids, 4, 0);
+    CHECK(queue_slot_id(&q, 0) == 10); CHECK(queue_slot_id(&q, 3) == 40); CHECK(queue_slot_id(&q, 4) == -1);
+    CHECK(queue_current_slot(&q) == 0);
+
+    CHECK(queue_remove_slot(&q, 1) == 0);                 /* remove 20; o atual nao muda de slot */
+    CHECK(q.count == 3); CHECK(queue_slot_id(&q, 1) == 30); CHECK(queue_slot_id(&q, 2) == 40);
+    CHECK(queue_next(&q, 0) == 30); CHECK(queue_next(&q, 0) == 40); CHECK(queue_next(&q, 0) == -1);
+
+    CHECK(queue_set(&q, ids, 4, 0) == 0);
+    queue_set_pos(&q, 1); CHECK(queue_current(&q) == 20);
+    CHECK(queue_remove_slot(&q, 1) == 1);                 /* remove o que esta tocando: segue com o proximo slot */
+    CHECK(q.count == 3); CHECK(queue_current(&q) == 30);
+
+    queue_set(&q, ids, 4, 0);
+    CHECK(queue_move_slot(&q, 0, 1) == 1);                /* 10 vai para tras: 20, 10, 30, 40 */
+    CHECK(queue_slot_id(&q, 0) == 20 && queue_slot_id(&q, 1) == 10);
+    CHECK(queue_current_slot(&q) == 1);                   /* o atual (10) acompanhinnou o slot 1 */
+    queue_set_pos(&q, 1);                                 /* atual = slot 1 (10) */
+    CHECK(queue_move_slot(&q, 1, 1) == 2);                /* atual acompanha: 20, 30, 10, 40 */
+    CHECK(queue_current(&q) == 10); CHECK(queue_next(&q, 0) == 40);
+    CHECK(queue_current_slot(&q) == 3);
+    CHECK(queue_move_slot(&q, 3, 1) == 3);                /* nao sai da fila */
+    CHECK(queue_move_slot(&q, 0, -1) == 0);
+    queue_set_pos(&q, 2);
+    queue_remove_slot(&q, 2);                             /* remove o atual do fim */
+    CHECK(q.count == 3 && queue_current_slot(&q) == 2);
+    queue_free(&q);
+    puts("ok queue slots");
+}
+
 static void t_playlist(void) {
     system("mkdir -p fixtures/pl");
     char in[3][PL_PATH_MAX] = {"sdmc:/Music/a.mp3", "sdmc:/Music/Album/b ç.mp3", "sdmc:/Music/c.mp3"};
@@ -263,7 +297,7 @@ static void t_cover(void) {
 }
 
 int main(void) {
-    t_util(); t_id3(); t_mp3info(); t_decoder(); t_decoder_xing(); t_viz(); t_queue(); t_playlist(); t_library(); t_search_albums(); t_resume(); t_cover();
+    t_util(); t_id3(); t_mp3info(); t_decoder(); t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

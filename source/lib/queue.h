@@ -17,3 +17,9 @@ int  queue_current(const Queue *q);                                /* id ou -1 *
 int  queue_next(Queue *q, int manual);                             /* id ou -1 se acabou */
 int  queue_prev(Queue *q);
 void queue_set_shuffle(Queue *q, int on);                          /* mantem a faixa atual */
+void queue_set_pos(Queue *q, int pos);                             /* comeca a contar a fila em pos */
+/* gerenciamento da fila por "slot" (posicao de reproducao, ja com shuffle aplicado) */
+int  queue_slot_id(const Queue *q, int slot);                      /* id no slot ou -1 */
+int  queue_current_slot(const Queue *q);                           /* slot em reproducao */
+int  queue_remove_slot(Queue *q, int slot);                        /* remove e devolve o slot atual */
+int  queue_move_slot(Queue *q, int slot, int dir);                 /* move ±1; devolve o novo slot */

@@ -54,3 +54,41 @@ void queue_set_shuffle(Queue *q, int on) {
     int cur = q->order[q->pos];
     if (on) shuffle_keep(q, cur); else { identity(q); q->pos = cur; }
 }
+
+void queue_set_pos(Queue *q, int pos) {
+    if (q->count == 0) { q->pos = 0; return; }
+    if (pos < 0) pos = 0;
+    if (pos >= q->count) pos = q->count - 1;
+    q->pos = pos;
+}
+
+int queue_slot_id(const Queue *q, int slot) {
+    if (slot < 0 || slot >= q->count) return -1;
+    return q->items[q->order[slot]];
+}
+
+int queue_current_slot(const Queue *q) { return q->count ? q->pos : -1; }
+
+int queue_remove_slot(Queue *q, int slot) {
+    if (q->count == 0 || slot < 0 || slot >= q->count) return q->pos;
+    int idx = q->order[slot];             /* indice do item em items[] */
+    for (int k = slot; k + 1 < q->count; k++) q->order[k] = q->order[k + 1];
+    for (int k = 0; k + 1 < q->count; k++) if (q->order[k] > idx) q->order[k]--;
+    for (int k = idx; k + 1 < q->count; k++) q->items[k] = q->items[k + 1];
+    q->count--;
+    if (slot < q->pos) q->pos--;
+    else if (slot == q->pos && q->pos >= q->count) q->pos = q->count ? q->count - 1 : 0;
+    return q->pos;
+}
+
+int queue_move_slot(Queue *q, int slot, int dir) {
+    int r = slot + dir;
+    if (q->count == 0 || slot < 0 || slot >= q->count) r = slot;
+    if (r < 0) r = 0;
+    if (r >= q->count) r = q->count - 1;
+    if (r == slot) return slot;
+    int t = q->order[slot]; q->order[slot] = q->order[r]; q->order[r] = t;
+    if (q->pos == slot) q->pos = r;       /* a faixa em reproducao acompanha a propria slot */
+    else if (q->pos == r) q->pos = slot;
+    return r;
+}

@@ -47,6 +47,8 @@ int main(void) {
     while (aptMainLoop() && !app.quit) {
         if (ui_input(&app)) redraw = 2;
         app_tick(&app);
+        /* Enquanto toca, fechar a tampa nao deve suspender o decoder nem o DSP. */
+        aptSetSleepAllowed(player_state() != PS_PLAYING);
         if (app.want_rescan) { app.want_rescan = 0; app_start_rescan(&app); redraw = 2; }   /* reescaneia em thread */
         if (covers_pump()) redraw = 2;
 
@@ -58,6 +60,7 @@ int main(void) {
         }
     }
 
+    aptSetSleepAllowed(true);
     app_exit(&app);
     covers_exit();
     player_exit();

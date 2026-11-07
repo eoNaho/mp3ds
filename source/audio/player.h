@@ -18,7 +18,8 @@ uint32_t player_duration_ms(void);
 int  player_take_finished(void);
 void player_get_viz(Viz *out);       /* analisa o trecho que esta tocando agora; chamar 1x por frame */
 /* equalizador (pico IIR do DSP, no canal do player) */
-void player_eq_set(int preset);      /* 0 = off (ver player.c para a lista) */
+void player_eq_set(int preset);
 void player_eq_cycle(void);
 int  player_eq_get(void);
-const char *player_eq_name(void);
+int  player_eq_count(void);
+const char *player_eq_name(int preset);

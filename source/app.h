@@ -4,7 +4,7 @@
 #include "playlist.h"
 #include "config.h"
 
-typedef enum { TAB_SONGS = 0, TAB_ALBUMS, TAB_PLAYLISTS, TAB_N } Tab;
+typedef enum { TAB_SONGS = 0, TAB_FILA, TAB_ALBUMS, TAB_PLAYLISTS, TAB_N } Tab;
 
 typedef struct {
     Library lib;
@@ -45,6 +45,13 @@ void app_set_filter(App *a, const char *query);         /* "" limpa o filtro */
 
 /* TAB_ALBUMS: lista de albuns (artista + album) */
 void app_play_album(App *a, int group);
+
+/* TAB_FILA: gerenciar a fila por slot (posicao de reproducao) */
+int  app_queue_rows(const App *a);
+int  app_queue_slot_id(const App *a, int slot);
+void app_queue_play_from(App *a, int slot);        /* toca a partir do slot */
+int  app_queue_remove(App *a, int slot);           /* remove; devolve o slot atual> */
+int  app_queue_move(App *a, int slot, int dir);    /* move ±1; devolve o novo slot */
 
 /* toca a partir de id; sob filtro a fila = resultados da busca, senao a biblioteca inteira */
 void app_play_from(App *a, int id);

@@ -144,6 +144,30 @@ void app_play_from(App *a, int id) {
     app_play_library_from(a, id);
 }
 
+/* ---------------- fila (aba Fila) ---------------- */
+
+int app_queue_rows(const App *a) { return a->q.count; }
+
+int app_queue_slot_id(const App *a, int slot) { return queue_slot_id(&a->q, slot); }
+
+void app_queue_play_from(App *a, int slot) {
+    if (a->scan_busy || a->q.count == 0) return;
+    queue_set_pos(&a->q, slot);
+    start_track(a, queue_current(&a->q));
+}
+
+int app_queue_remove(App *a, int slot) {
+    if (a->scan_busy || a->q.count == 0) return queue_current_slot(&a->q);
+    int cur = queue_remove_slot(&a->q, slot);
+    if (a->q.count == 0) { player_stop(); a->cur = -1; app_save_resume(a); }
+    return cur;
+}
+
+int app_queue_move(App *a, int slot, int dir) {
+    if (a->scan_busy || a->q.count == 0) return queue_current_slot(&a->q);
+    return queue_move_slot(&a->q, slot, dir);
+}
+
 void app_next(App *a, int manual) {
     int id = queue_next(&a->q, manual);
     if (id < 0) { if (!manual) { player_stop(); a->cur = -1; app_save_resume(a); } return; }

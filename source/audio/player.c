@@ -10,7 +10,7 @@
 #define STACK_SZ    (48 * 1024)
 
 enum { CMD_NONE = 0, CMD_PLAY, CMD_STOP, CMD_SEEK };
-enum { EQ_N = 4 };   /* off, graves, voz, brilho */
+enum { EQ_N = 6 };   /* off, sub, graves, voz, brilho, suave */
 
 static ndspWaveBuf wb[NBUF];
 static int16_t    *pcm[NBUF];
@@ -30,13 +30,15 @@ static Viz s_viz;
 
 typedef struct { const char *name; float f0, q, gain; } EqPreset;
 
-/* equalizador: pico IIR do DSP (gain bruto = 10^(dB/40)) */
+/* equalizador: pico IIR do DSP (gain bruto = 10^(dB/40); <1 corta) */
 static int s_eq_preset;
 static const EqPreset s_eq[EQ_N] = {
     { "Desligado",     0.0f, 1.0f, 1.0f    },
-    { "Graves",       90.0f, 1.4f, 1.4125f },   /* +6 dB em 90 Hz  */
-    { "Voz"  ,      2000.0f, 1.2f, 1.2589f },   /* +4 dB em 2 kHz  */
-    { "Brilho",     9000.0f, 1.2f, 1.2589f },   /* +4 dB em 9 kHz  */
+    { "Sub"     ,     60.0f, 1.0f, 2.5119f },   /* +9 dB em 60 Hz   */
+    { "Graves"  ,    100.0f, 1.2f, 1.4125f },   /* +6 dB em 100 Hz  */
+    { "Voz"     ,   2500.0f, 1.2f, 1.2589f },   /* +4 dB em 2,5 kHz */
+    { "Brilho"  ,  10000.0f, 1.2f, 1.2589f },   /* +4 dB em 10 kHz  */
+    { "Suave"   ,   3000.0f, 1.0f, 0.6310f },   /* -4 dB em 3 kHz, corta aspereza */
 };
 
 void player_eq_apply(void);
@@ -213,4 +215,5 @@ void player_eq_set(int preset) {
 }
 void player_eq_cycle(void) { s_eq_preset = (s_eq_preset + 1) % EQ_N; player_eq_apply(); }
 int player_eq_get(void) { return s_eq_preset; }
-const char *player_eq_name(void) { return s_eq[s_eq_preset].name; }
+int player_eq_count(void) { return EQ_N; }
+const char *player_eq_name(int preset) { return s_eq[(preset < 0 || preset >= EQ_N) ? 0 : preset].name; }

@@ -93,6 +93,16 @@ static void icon_clear(float cx, float cy, u32 c) {       /* X */
     C2D_DrawLine(cx - 6, cy + 6, c, cx + 6, cy - 6, c, 2.0f, 0.62f);
 }
 
+/* resposta aproximada de cada preset EQ (5 barras: 1s do perfil de frequencia) */
+static const unsigned char EQ_BARS[6][5] = {
+    { 3, 3, 3, 3, 3 },   /* Desligado: flat      */
+    {13, 9, 4, 2, 1 },   /* Sub                  */
+    {11, 8, 4, 2, 2 },   /* Graves               */
+    { 2, 4, 8,11, 6 },   /* Voz                  */
+    { 2, 3, 5, 9,13 },   /* Brilho               */
+    { 3, 5, 3, 7, 4 },   /* Suave (corte @3 kHz) */
+};
+
 /* ---------- busca por teclado (3DS) ---------- */
 static void ask_query(App *a) {
     if (a->screen_off) screens_power(a, 0);
@@ -111,9 +121,12 @@ static void ask_query(App *a) {
 }
 
 /* ---------- entrada ---------- */
+static int s_eq_open;                                     /* painel de presets do EQ */
+
 static int list_count(const App *a) {
     if (a->scan_busy) return 0;
     if (a->tab == TAB_SONGS) return app_songs_rows(a);
+    if (a->tab == TAB_FILA) return app_queue_rows(a);
     if (a->tab == TAB_ALBUMS) return a->nalb;
     return a->npl + 2;
 }
@@ -132,6 +145,7 @@ static void clamp_view(App *a) {
 static void activate(App *a, int row) {
     if (a->scan_busy) return;
     if (a->tab == TAB_SONGS) { app_play_from(a, app_row_to_id(a, row)); return; }
+    if (a->tab == TAB_FILA) { app_queue_play_from(a, row); return; }
     if (a->tab == TAB_ALBUMS) { app_play_album(a, row); return; }
     if (row == 0) app_save_queue_playlist(a);
     else if (row == 1) a->want_rescan = 1;
@@ -140,26 +154,39 @@ static void activate(App *a, int row) {
 
 static void tap(App *a, int x, int y) {
     int t = a->tab;
+    if (y >= 134 && y < 176 && s_eq_open) {                       /* painel de presets do EQ */
+        int p = (x - 8) / 52;
+        if (p >= 0 && p < player_eq_count()) player_eq_set(p);
+        s_eq_open = 0;
+        char b[64]; snprintf(b, sizeof b, "EQ: %s", player_eq_name(player_eq_get()));
+        app_toast(a, b);
+        return;
+    }
     if (y < LIST_Y - 2) {
-        if (x < 95) a->tab = TAB_SONGS;
-        else if (x < 178) a->tab = TAB_ALBUMS;
-        else if (x < 246) { a->tab = TAB_PLAYLISTS; app_refresh_playlists(a); }
-        else if (x >= 284) screens_power(a, 1);
+        if (x < 72) a->tab = TAB_SONGS;
+        else if (x < 118) a->tab = TAB_FILA;
+        else if (x < 172) a->tab = TAB_ALBUMS;
+        else if (x < 240) { a->tab = TAB_PLAYLISTS; app_refresh_playlists(a); }
+        else if (x >= 282) screens_power(a, 1);
         else if (t == TAB_SONGS) {
             if (a->query[0]) { app_set_filter(a, ""); a->sel[TAB_SONGS] = a->top[TAB_SONGS] = 0; }  /* limpa */
             else ask_query(a);
         }
     } else if (y < LIST_Y + ROWS * ROW_H) {
         int row = a->top[t] + (y - LIST_Y) / ROW_H;
-        if (row < list_count(a)) { a->sel[t] = row; activate(a, row); }
+        if (row < list_count(a)) {
+            if (t == TAB_FILA && x >= BOT_W - 34) {               /* lixeira na borda do item */
+                app_queue_remove(a, row);
+            } else { a->sel[t] = row; activate(a, row); }
+        }
     } else if (y >= 176) {
-        switch (x / 52) {
+        if (x >= 274) s_eq_open = !s_eq_open;                     /* abre/fecha o painel do EQ */
+        else switch (x / 52) {
             case 0: app_toggle_shuffle(a); break;
             case 1: app_prev(a); break;
             case 2: app_toggle_pause(a); break;
             case 3: app_next(a, 1); break;
-            case 4: app_cycle_repeat(a); break;
-            default: player_eq_cycle(); { char b[64]; snprintf(b, sizeof b, "EQ: %s", player_eq_name()); app_toast(a, b); } break;
+            default: app_cycle_repeat(a); break;
         }
     }
 }
@@ -183,12 +210,19 @@ int ui_input(App *a) {
     if (a->scan_busy && (kd & KEY_B)) a->scan_abort = 1;            /* cancela o scan em thread */
     else if (kd & KEY_B) app_toggle_pause(a);
     if (!a->scan_busy && (kd & KEY_A)) activate(a, a->sel[t]);
-    if (kd & KEY_X) app_toggle_shuffle(a);
+    if (t == TAB_FILA && !a->scan_busy) {                           /* gerenciar a fila */
+        if (kd & KEY_X) app_queue_remove(a, a->sel[t]);
+        if (kr & KEY_DLEFT)  a->sel[t] = app_queue_move(a, a->sel[t], -1);
+        if (kr & KEY_DRIGHT) a->sel[t] = app_queue_move(a, a->sel[t], +1);
+    } else {
+        if (kd & KEY_X) app_toggle_shuffle(a);
+        if (kr & KEY_DLEFT)  app_seek_rel(a, -10000);
+        if (kr & KEY_DRIGHT) app_seek_rel(a, 10000);
+    }
     if (kd & KEY_Y) app_cycle_repeat(a);
     if (kd & KEY_L) app_prev(a);
     if (kd & KEY_R) app_next(a, 1);
-    if (kr & KEY_DLEFT)  app_seek_rel(a, -10000);
-    if (kr & KEY_DRIGHT) app_seek_rel(a, 10000);
+    if (s_eq_open && (kd & (KEY_B | KEY_A | KEY_X | KEY_Y))) s_eq_open = 0;
     clamp_view(a);
 
     if (kd & KEY_TOUCH) { t_down = 1; t_sx = tp.px; t_sy = t_ly = tp.py; t_moved = 0; t_acc = 0; }
@@ -257,7 +291,7 @@ static void draw_top(App *a, const Viz *v) {
     text_center(t2, 376 - 12, 206, 0.42f, DIM);
     if (a->q.shuffle) text("SHUFFLE", 150, 206, 0.36f, accent);
     if (a->q.repeat != REPEAT_OFF) text(a->q.repeat == REPEAT_ONE ? "REPEAT 1" : "REPEAT", 215, 206, 0.36f, accent);
-    if (player_eq_get() > 0) { const char *e = player_eq_name(); text(e, 286, 206, 0.34f, ACCENT0); }
+    if (player_eq_get() > 0) text(player_eq_name(player_eq_get()), 286, 206, 0.34f, ACCENT0);
     if (a->toast_frames > 0) text_center(a->toast, TOP_W / 2.0f, 8, 0.42f, TXT);
 }
 
@@ -277,12 +311,13 @@ static void draw_bottom(App *a) {
     const CoverTex *cv = cur ? covers_get(cur->art_key, cur->path) : NULL;
     u32 accent = cv ? cv->accent : ACCENT0;
 
-    /* cabecalho: Musicas | Albuns | Playlists | lupa | lua */
+    /* cabecalho: Musicas | Fila | Albuns | Playlists | lupa | lua */
     rect(0, 0, BOT_W, 28, PANEL);
-    text("Musicas", 14, 5, 0.5f, t == TAB_SONGS ? TXT : DIM);
-    text("Albuns", 112, 5, 0.5f, t == TAB_ALBUMS ? TXT : DIM);
-    text("Playlists", 192, 5, 0.5f, t == TAB_PLAYLISTS ? TXT : DIM);
-    static const float ux[3] = {10, 104, 185}, uw[3] = {76, 58, 62};
+    text("Musicas", 8, 5, 0.44f, t == TAB_SONGS ? TXT : DIM);
+    text("Fila", 80, 5, 0.44f, t == TAB_FILA ? TXT : DIM);
+    text("Albuns", 124, 5, 0.44f, t == TAB_ALBUMS ? TXT : DIM);
+    text("Playlists", 176, 5, 0.44f, t == TAB_PLAYLISTS ? TXT : DIM);
+    static const float ux[4] = {4, 76, 120, 172}, uw[4] = {62, 40, 50, 66};
     rect(ux[t], 25, uw[t], 3, accent);
     if (t == TAB_SONGS && a->query[0]) {
         icon_clear(263, 14, accent);
@@ -300,8 +335,14 @@ static void draw_bottom(App *a) {
     if (t == TAB_SONGS && n == 0) {
         text_center(a->query[0] ? "Nada encontrado" : "Biblioteca vazia", BOT_W / 2.0f, 80, 0.5f, DIM);
         if (!a->query[0]) text_center("Coloque MP3 em sdmc:/Music", BOT_W / 2.0f, 106, 0.4f, DIM);
+    } else if (t == TAB_FILA && n == 0) {
+        text_center("Fila vazia", BOT_W / 2.0f, 70, 0.5f, DIM);
+        text_center("Toque uma faixa na aba Musicas", BOT_W / 2.0f, 96, 0.4f, DIM);
     } else if (t == TAB_ALBUMS && n == 0) {
         text_center("Nenhum album", BOT_W / 2.0f, 80, 0.5f, DIM);
+    } else if (t == TAB_FILA && n > 0) {
+        snprintf(b, sizeof b, "X ou lixo: remover   < / > : mover");
+        text_center(b, BOT_W / 2.0f, LIST_Y - 4, 0.3f, DIM);
     }
     for (int r = 0; r < ROWS && a->top[t] + r < n; r++) {
         int i = a->top[t] + r; float y = LIST_Y + r * ROW_H;
@@ -314,6 +355,15 @@ static void draw_bottom(App *a) {
             if (playing) rect(0, y, 3, ROW_H - 2, accent);
             text(b, 10, y + 1, 0.45f, playing ? accent : TXT);
             text(c, 10, y + 15, 0.34f, DIM);
+        } else if (t == TAB_FILA) {
+            const Track *tr = &a->lib.tracks[app_queue_slot_id(a, i)];
+            u_utf8_trunc(b, sizeof b, tr->title, 30);
+            u_utf8_trunc(c, sizeof c, tr->artist, 30);
+            int playing = (i == queue_current_slot(&a->q));
+            if (playing) rect(0, y, 3, ROW_H - 2, accent);
+            text(b, 10, y + 1, 0.45f, playing ? accent : TXT);
+            text(c, 10, y + 15, 0.34f, DIM);
+            icon_clear(304, y + 13, i == a->sel[t] ? DIM : C2D_Color32(90, 90, 105, 255));   /* lixeira */
         } else if (t == TAB_ALBUMS) {
             const AlbumGroup *al = &a->albums[i];
             int playing = a->cur >= 0 && a->cur >= al->first && a->cur < al->first + al->count;
@@ -334,6 +384,21 @@ static void draw_bottom(App *a) {
         rect(BOT_W - 4, y, 3, h, DIM);
     }
 
+    /* painel visual do EQ (aberto pelo botao EQ) */
+    int eq = player_eq_get();
+    if (s_eq_open) {
+        rrect(4, 132, BOT_W - 8, 42, 8, PANEL);
+        for (int p = 0; p < player_eq_count(); p++) {
+            float x = 8 + p * 52;
+            rrect(x, 136, 48, 34, 5, p == eq ? accent : PANEL);
+            for (int k = 0; k < 5; k++) {                       /* perfil de frequencia do preset */
+                float bh = EQ_BARS[p][k] * 0.8f;
+                rect(x + 10 + k * 6, 148 - bh, 4, bh, p == eq ? BG : DIM);
+            }
+            text_center(player_eq_name(p), x + 24, 152, 0.26f, p == eq ? BG : TXT);
+        }
+    }
+
     /* controles: shuffle | prev | play | next | repeat | EQ */
     rect(0, 176, BOT_W, 64, PANEL);
     float cy = 208;
@@ -345,7 +410,6 @@ static void draw_bottom(App *a) {
     icon_next(216, cy, 22, TXT);
     rrect(240, cy - 9, 28, 18, 5, rp); rect(245, cy - 5, 18, 10, PANEL);                     /* repeat (simbolico) */
     if (a->q.repeat == REPEAT_ONE) rect(252, cy - 4, 3, 8, rp);
-    int eq = player_eq_get();
     C2D_DrawCircleSolid(296, cy, 0.5f, 14, eq ? accent : PANEL);
     text_center("EQ", 296, cy - 6, 0.35f, eq ? BG : DIM);
 }
