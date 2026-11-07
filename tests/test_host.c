@@ -17,6 +17,9 @@
 #include "cover.h"
 #include "util.h"
 #include "config.h"
+#include "texture.h"
+#include "save_state.h"
+#include "commands.h"
 
 #define M "fixtures/music"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FALHOU %s:%d  %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
@@ -325,6 +328,76 @@ static void t_queue_slots(void) {
     puts("ok queue slots");
 }
 
+static void t_playback_commands(void) {
+    PlaybackCommand p = {0};
+    playback_command_post(&p, CMD_PLAY, "nova.mp3", 0);
+    playback_command_post(&p, CMD_SEEK, NULL, 10000);
+    CHECK(p.cmd == CMD_PLAY && p.seek == 10000 && !strcmp(p.path, "nova.mp3"));
+    playback_command_post(&p, CMD_SEEK, NULL, 20000);
+    CHECK(p.cmd == CMD_PLAY && p.seek == 20000);
+    playback_command_post(&p, CMD_PLAY, "outra.mp3", 0);
+    CHECK(p.cmd == CMD_PLAY && p.seek == 0 && !strcmp(p.path, "outra.mp3"));
+    playback_command_post(&p, CMD_STOP, NULL, 0);
+    playback_command_post(&p, CMD_SEEK, NULL, 5000);
+    CHECK(p.cmd == CMD_STOP);
+    p.cmd = CMD_NONE;
+    playback_command_post(&p, CMD_SEEK, NULL, 3000);
+    CHECK(p.cmd == CMD_SEEK && p.seek == 3000);
+    puts("ok playback commands");
+}
+
+static void t_texture_tiles(void) {
+    uint8_t rgba[32 * 16 * 4], tiled[sizeof rgba];
+    for (int y = 0; y < 16; y++) for (int x = 0; x < 32; x++) {
+        int offset = (y * 32 + x) * 4;
+        rgba[offset] = x; rgba[offset + 1] = y;
+        rgba[offset + 2] = 123; rgba[offset + 3] = 255;
+    }
+    texture_tile_rgba8(tiled, rgba, 32, 16);
+    /* Cantos com coordenadas assimetricas: topo/esquerda continua no topo/esquerda.
+       Subtextura Citro2D: left=0, top=1, right=1, bottom=0. */
+    CHECK(tiled[2] == 0 && tiled[3] == 0);
+    CHECK(tiled[63 * 4 + 2] == 7 && tiled[63 * 4 + 3] == 7);
+    CHECK(tiled[(7 * 64 + 63) * 4 + 2] == 15);
+    CHECK(tiled[(7 * 64 + 63) * 4 + 3] == 31);
+    for (int tile = 0; tile < 8; tile++) for (int pixel = 0; pixel < 64; pixel++) {
+        int x = 0, y = 0;
+        for (int bit = 0; bit < 3; bit++) {
+            x |= ((pixel >> (2 * bit)) & 1) << bit;
+            y |= ((pixel >> (2 * bit + 1)) & 1) << bit;
+        }
+        x += (tile % 4) * 8; y += (tile / 4) * 8;
+        int offset = (tile * 64 + pixel) * 4;
+        CHECK(tiled[offset] == 255 && tiled[offset + 1] == 123);
+        CHECK(tiled[offset + 2] == y && tiled[offset + 3] == x);
+    }
+    puts("ok texture tiles");
+}
+
+static void t_save_snapshot(void) {
+    Track tracks[2] = {0}; Library l = {.tracks = tracks, .count = 2};
+    strcpy(tracks[0].path, "sdmc:/Music/zero.mp3"); tracks[0].plays = 3;
+    strcpy(tracks[1].path, "sdmc:/Music/um.mp3");
+    Queue q; queue_init(&q, 17); int ids[] = {0, 1, 0};
+    CHECK(queue_set(&q, ids, 3, 0) == 0);
+    queue_move_slot(&q, 0, 1); q.shuffle = 1; q.repeat = REPEAT_ALL;
+    SaveState *snapshot = save_state_capture(&l, &q, tracks[0].path, 12345, 1);
+    CHECK(snapshot != NULL);
+    memset(tracks, 0, sizeof tracks); queue_free(&q);
+    CHECK(save_state_write(snapshot, "fixtures/snapshot-session.txt", "fixtures/snapshot-resume.txt", "fixtures/snapshot.idx") == 0);
+    Library restored = {0}; CHECK(library_load_index(&restored, "fixtures/snapshot.idx") == 0);
+    CHECK(restored.count == 2 && restored.tracks[0].plays == 3);
+    CHECK(session_load("fixtures/snapshot-session.txt", &restored, &q) == 0);
+    CHECK(q.count == 3 && q.pos == 1 && q.shuffle && q.repeat == REPEAT_ALL);
+    CHECK(queue_current(&q) == 0 && queue_slot_id(&q, 0) == 1);
+    char path[256]; uint32_t ms;
+    CHECK(resume_load("fixtures/snapshot-resume.txt", path, sizeof path, &ms) == 0);
+    CHECK(ms == 12345 && !strcmp(path, restored.tracks[0].path));
+    CHECK(save_state_write(snapshot, "fixtures/inexistente/session.txt", "fixtures/snapshot-resume.txt", "fixtures/snapshot.idx") != 0);
+    queue_free(&q); library_free(&restored); save_state_free(snapshot);
+    puts("ok save snapshot");
+}
+
 static void t_queue_session(void) {
     Queue q, restored; queue_init(&q, 91); queue_init(&restored, 5);
     CHECK(queue_insert(&q, 0, 1) == 0);
@@ -435,7 +508,7 @@ int main(void) {
 #if ENABLE_FLAC
     t_flac();
 #endif
-    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
+    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playback_commands(); t_texture_tiles(); t_save_snapshot(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

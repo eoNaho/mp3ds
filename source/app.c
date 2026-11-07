@@ -2,6 +2,7 @@
 #include "player.h"
 #include "resume.h"
 #include "session.h"
+#include "persistence.h"
 #include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -209,9 +210,6 @@ static void start_track(App *a, int id) {
     if (id < 0 || id >= a->lib.count) { player_stop(); a->cur = -1; return; }
     a->cur = id;
     const char *p = a->lib.tracks[id].path;
-    library_record_play(&a->lib, id, 0);
-    a->stats_dirty = 1;
-    rebuild_view(a);
     /* 1a reproducao da sessao: se for a ultima faixa, retoma do ponto salvo */
     if (!a->resume_used && a->resume_ms > 2000 && !strcmp(p, a->resume_path)) {
         player_play_seek(p, a->resume_ms);
@@ -219,11 +217,20 @@ static void start_track(App *a, int id) {
     } else {
         player_play(p);
     }
+    library_record_play(&a->lib, id, 0);
+    a->stats_dirty = 1;
+    if (a->sort_mode == SORT_RECENTES) {
+        library_sort_ids(&a->lib, a->view_ids, a->nview, a->sort_mode);
+        int row = app_id_to_row(a, id);
+        if (row >= 0) a->sel[TAB_SONGS] = row;
+    }
 }
 
 static void app_play_ids(App *a, const int *ids, int n, int start) {
     if (n <= 0) return;
-    queue_set(&a->q, ids, n, start);
+    if (queue_set(&a->q, ids, n, start) != 0) {
+        app_toast(a, "Sem memoria para montar a fila"); return;
+    }
     start_track(a, queue_current(&a->q));
 }
 
@@ -277,7 +284,6 @@ void app_next(App *a, int manual) {
     if (id < 0) {
         if (!manual) {
             player_stop(); a->cur = -1; app_save_resume(a);
-            if (a->stats_dirty) { library_save_index(&a->lib, INDEX_PATH); a->stats_dirty = 0; }
         }
         return;
     }
@@ -295,7 +301,7 @@ void app_enqueue(App *a, int id, int next) {
     if (queue_insert(&a->q, id, next) < 0) {
         app_toast(a, "Sem memoria para adicionar a faixa"); return;
     }
-    session_save(SESSION_PATH, &a->lib, &a->q);
+    app_save_resume(a);
     app_toast(a, next ? "Adicionada para tocar a seguir" : "Adicionada ao fim da fila");
 }
 
@@ -328,17 +334,16 @@ void app_cycle_repeat(App *a) {
 
 /* salva faixa atual + posicao; sem faixa tocando, apaga o estado */
 void app_save_resume(App *a) {
-    if (!a->scan_busy) session_save(SESSION_PATH, &a->lib, &a->q);
+    if (a->scan_busy) return;
     if (a->cur >= 0 && a->cur < a->lib.count && player_state() != PS_STOPPED) {
-        uint32_t ms = player_pos_ms();
         u_copy(a->resume_path, sizeof a->resume_path, a->lib.tracks[a->cur].path);
-        a->resume_ms = ms;
-        resume_save(RESUME_PATH, a->resume_path, ms);
-        if (a->stats_dirty) { library_save_index(&a->lib, INDEX_PATH); a->stats_dirty = 0; }
-    } else {
-        a->resume_ms = 0;
-        resume_save(RESUME_PATH, "", 0);
+        a->resume_ms = player_pos_ms();
+    } else if (a->cur < 0) {
+        a->resume_path[0] = 0; a->resume_ms = 0;
     }
+    if (persistence_submit(&a->lib, &a->q, a->resume_path, a->resume_ms, a->stats_dirty) == 0)
+        a->stats_dirty = 0;
+    else { a->stats_dirty = 1; app_toast(a, "Nao consegui agendar o salvamento"); }
 }
 
 /* ---------------- scan (sincronico para o arranque; thread durante uso) ---------------- */
@@ -380,6 +385,7 @@ static void scan_worker(void *arg) {
 
 void app_start_rescan(App *a) {
     if (a->scan_busy) return;
+    if (persistence_busy()) { a->want_rescan = 1; return; }
     a->scan_abort = 0;
     a->scan_found = 0;
     a->scan_frames = 0;
@@ -398,6 +404,10 @@ void app_start_rescan(App *a) {
 /* ---------------- tick por frame ---------------- */
 
 void app_tick(App *a) {
+    if (persistence_take_error()) {
+        a->stats_dirty = 1;
+        app_toast(a, "Erro ao salvar no SD; vou tentar novamente");
+    }
     int f = player_take_finished();
     if (f == 1) { a->fail_streak = 0; app_next(a, 0); }
     else if (f == -1) {                      /* arquivo ruim: pula, mas nao entra em loop se tudo falhar */
@@ -445,6 +455,7 @@ void app_tick(App *a) {
 void app_init(App *a) {
     memset(a, 0, sizeof *a);
     a->cur = -1;
+    if (persistence_init() != 0) app_toast(a, "Salvamento em segundo plano indisponivel");
     queue_init(&a->q, (unsigned)time(NULL));
     a->sort_mode = SORT_ARTISTA;
     a->index_loaded = library_load_index(&a->lib, INDEX_PATH) == 0;
@@ -462,9 +473,14 @@ void app_init(App *a) {
 }
 
 void app_exit(App *a) {
-    if (!a->scan_busy) session_save(SESSION_PATH, &a->lib, &a->q);
-    if (a->cur >= 0 && player_state() != PS_STOPPED) app_save_resume(a);   /* posicao antes de encerrar */
-    if (a->stats_dirty) library_save_index(&a->lib, INDEX_PATH);
+    app_save_resume(a);
+    persistence_exit();
+    if (persistence_take_error()) a->stats_dirty = 1;
+    /* Fallback apenas ao sair, se o worker nao iniciou ou o SD falhou. */
+    if (a->stats_dirty && !a->scan_busy) {
+        SaveState *state = save_state_capture(&a->lib, &a->q, a->resume_path, a->resume_ms, 1);
+        if (state) { save_state_write(state, SESSION_PATH, RESUME_PATH, INDEX_PATH); save_state_free(state); }
+    }
     player_stop();
     if (a->scan_old) { free(a->scan_old); a->scan_old = NULL; }
     queue_free(&a->q);

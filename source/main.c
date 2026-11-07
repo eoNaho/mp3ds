@@ -51,7 +51,7 @@ int main(void) {
         /* Enquanto toca, fechar a tampa nao deve suspender o decoder nem o DSP. */
         aptSetSleepAllowed(player_state() != PS_PLAYING);
         if (app.want_rescan) { app.want_rescan = 0; app_start_rescan(&app); redraw = 2; }   /* reescaneia em thread */
-        if (covers_pump()) redraw = 2;
+        if (covers_ready()) redraw = 2;
 
         if (redraw > 0 || player_state() == PS_PLAYING || app.toast_frames > 0 || app.scan_busy) {
             ui_draw(&app);

@@ -3,13 +3,13 @@
 #include <string.h>
 #include "player.h"
 #include "decoder.h"
+#include "commands.h"
 
 #define CH          0
 #define NBUF        4
 #define BUF_FRAMES  4096                 /* ~93 ms a 44,1 kHz => ~370 ms para MP3 */
 #define STACK_SZ    (48 * 1024)
 
-enum { CMD_NONE = 0, CMD_PLAY, CMD_STOP, CMD_SEEK };
 enum { EQ_N = 6 };   /* off, sub, graves, voz, brilho, suave */
 
 static ndspWaveBuf wb[NBUF];
@@ -20,7 +20,7 @@ static LightEvent  s_ev;
 static LightLock   s_lock;
 static Thread      s_th;
 static volatile bool s_run;
-static struct { int cmd; char path[256]; uint32_t seek; } s_pend;
+static PlaybackCommand s_pend;
 
 static volatile PlayerState s_state = PS_STOPPED;
 static volatile bool     s_paused, s_applied_pause;
@@ -158,8 +158,7 @@ void player_exit(void) {
 
 static void post(int cmd, const char *path, uint32_t seek) {
     LightLock_Lock(&s_lock);
-    s_pend.cmd = cmd; s_pend.seek = seek;
-    if (path) { strncpy(s_pend.path, path, sizeof s_pend.path - 1); s_pend.path[sizeof s_pend.path - 1] = 0; }
+    playback_command_post(&s_pend, cmd, path, seek);
     LightLock_Unlock(&s_lock);
     LightEvent_Signal(&s_ev);
 }

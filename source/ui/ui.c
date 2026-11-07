@@ -520,13 +520,14 @@ static void draw_bottom(App *a) {
 }
 
 void ui_draw(App *a) {
+    if (a->screen_off) { gspWaitForVBlank(); return; }
     static Viz viz;
     static unsigned viz_frame;
     /* O visualizador e apenas decorativo: 15 Hz reduz calculos de float sem
        deixar a interface perceptivelmente menos fluida. */
     if ((viz_frame++ & 1u) == 0 || player_state() != PS_PLAYING) player_get_viz(&viz);
-    if (a->screen_off) return;
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    covers_pump(); /* troca texturas somente depois de concluir o frame anterior */
     C2D_TextBufClear(s_buf);
     draw_top(a, &viz);
     draw_bottom(a);

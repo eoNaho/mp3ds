@@ -69,6 +69,12 @@ def parse_args() -> argparse.Namespace:
         help="espera entre reconhecimentos para reduzir o risco de limite (padrão: 2)",
     )
     parser.add_argument(
+        "--request-interval",
+        type=int,
+        default=1,
+        help="intervalo solicitado ao SongRec (padrão: 1 segundo)",
+    )
+    parser.add_argument(
         "--cache-dir",
         type=Path,
         default=None,
@@ -94,17 +100,29 @@ def has_embedded_cover(path: Path) -> bool:
     return bool(tags.getall("APIC"))
 
 
-def run_songrec(executable: str, path: Path) -> dict[str, Any] | None:
+def run_songrec(
+    executable: str, path: Path, timeout: float, request_interval: int
+) -> dict[str, Any] | None:
     """Executa SongRec e retorna a resposta JSON, ou None quando sem match."""
     try:
         result = subprocess.run(
-            [executable, "recognize", "--json", str(path)],
+            [
+                executable,
+                "recognize",
+                "--json",
+                "--request-interval",
+                str(request_interval),
+                str(path),
+            ],
             check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"SongRec excedeu o timeout de {timeout:g}s") from exc
     except OSError as exc:
         raise RuntimeError(
             f"não consegui executar '{executable}': {exc}. "
@@ -248,8 +266,8 @@ def main() -> int:
     if args.limit < 0:
         print("erro: --limit não pode ser negativo", file=sys.stderr)
         return 2
-    if args.delay < 0 or args.timeout <= 0:
-        print("erro: --delay deve ser >= 0 e --timeout deve ser > 0", file=sys.stderr)
+    if args.delay < 0 or args.timeout <= 0 or args.request_interval < 1:
+        print("erro: --delay >= 0, --timeout > 0 e --request-interval >= 1", file=sys.stderr)
         return 2
 
     try:
@@ -272,7 +290,7 @@ def main() -> int:
             continue
 
         try:
-            response = run_songrec(args.songrec, path)
+            response = run_songrec(args.songrec, path, args.timeout, args.request_interval)
             if response is None:
                 stats["no_match"] += 1
                 print(f"[{index}/{len(files)}] sem reconhecimento: {relative}")

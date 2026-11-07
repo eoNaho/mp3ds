@@ -76,13 +76,16 @@ int library_load_index(Library *l, const char *p) {
 }
 
 int library_save_index(const Library *l, const char *p) {
-    FILE *f = fopen(p, "wb");
+    char tmp[512];
+    if (snprintf(tmp, sizeof tmp, "%s.tmp", p) >= (int)sizeof tmp) return -1;
+    FILE *f = fopen(tmp, "wb");
     if (!f) return -1;
     IdxHeader h; memcpy(h.magic, IDX_MAGIC, 4);
     h.version = IDX_VERSION; h.rec_size = sizeof(Track); h.count = (uint32_t)l->count;
-    fwrite(&h, sizeof h, 1, f);
-    fwrite(l->tracks, sizeof(Track), l->count, f);
-    fclose(f);
+    int ok = fwrite(&h, sizeof h, 1, f) == 1;
+    if (ok && l->count) ok = fwrite(l->tracks, sizeof(Track), l->count, f) == (size_t)l->count;
+    if (fclose(f) != 0) ok = 0;
+    if (!ok || rename(tmp, p) != 0) { remove(tmp); return -1; }
     return 0;
 }
 

@@ -17,5 +17,6 @@ void covers_init(void);
 void covers_exit(void);
 /* Retorna a capa se ja estiver na memoria; senao agenda a leitura/criacao em thread e retorna NULL. */
 const CoverTex *covers_get(uint32_t key, const char *track_path);
-/* Chamar 1x por frame, antes de desenhar: sobe no maximo 1 textura pendente para a GPU. */
+int covers_ready(void); /* consulta leve: resultado do worker aguardando upload */
+/* Chamar depois de C3D_FrameBegin (GPU anterior terminou), antes de desenhar: sobe no maximo 1 textura pendente para a GPU. */
 int  covers_pump(void);   /* 1 se subiu uma textura nova (precisa redesenhar) */

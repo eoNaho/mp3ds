@@ -24,6 +24,10 @@ O intervalo padrão entre consultas é de dois segundos. Para um teste rápido
 local, ele pode ser reduzido com `--delay 0`; para uma coleção grande, é melhor
 mantê-lo ou aumentá-lo para evitar limite temporário do serviço.
 
+Cada reconhecimento também possui timeout. O padrão é de 30 segundos; uma
+faixa que travar será registrada como falha e o lote continuará. Para uma
+execução mais rápida, pode-se usar `--timeout 15 --request-interval 1`.
+
 Depois aplique nas músicas:
 
 ```sh

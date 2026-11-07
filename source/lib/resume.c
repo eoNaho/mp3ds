@@ -31,13 +31,8 @@ int resume_save(const char *file, const char *path, uint32_t ms) {
     if (snprintf(tmp, sizeof tmp, "%s.tmp", file) >= (int)sizeof tmp) return -1;
     FILE *f = fopen(tmp, "wb");
     if (!f) return -1;
-    fprintf(f, RESUME_FMT " %lu\n%s\n", (unsigned long)ms, path);
-    fclose(f);
-    if (rename(tmp, file) != 0) {   /* sem rename (FS sem suporte): grava direto */
-        f = fopen(file, "wb");
-        if (!f) { remove(tmp); return -1; }
-        fprintf(f, RESUME_FMT " %lu\n%s\n", (unsigned long)ms, path);
-        fclose(f);
-    }
+    int ok = fprintf(f, RESUME_FMT " %lu\n%s\n", (unsigned long)ms, path) >= 0;
+    if (fclose(f) != 0) ok = 0;
+    if (!ok || rename(tmp, file) != 0) { remove(tmp); return -1; }
     return 0;
 }

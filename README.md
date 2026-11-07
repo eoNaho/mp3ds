@@ -37,6 +37,11 @@ A fila é salva em `session.txt`, incluindo a ordem de reprodução, a posição
 shuffle e repeat. Ao reabrir, pressione B ou play para continuar; a reprodução
 começa quando você pedir. Faixas removidas do SD são ignoradas na restauração.
 
+Durante o uso, sessão, posição e histórico são gravados por um worker, sem
+escritas no SD na thread da interface. Ao sair, o app aguarda o último salvamento.
+As capas são convertidas diretamente para a textura, e a troca ocorre depois do
+frame anterior terminar, evitando esperas extras de transferência da GPU.
+
 O estado de retomada (`resume.txt`) guarda a última faixa e posição: ao abrir de novo
 e tocar a mesma faixa, ela começa de onde parou. O índice também guarda `added`, `plays`
 e `last_played`; índices antigos são migrados automaticamente para o formato v2.

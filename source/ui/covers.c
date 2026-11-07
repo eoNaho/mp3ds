@@ -1,6 +1,7 @@
 #include "covers.h"
 #include "cover.h"
 #include "config.h"
+#include "texture.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -64,19 +65,9 @@ void covers_exit(void) {
 
 /* RGBA8 (bytes R,G,B,A) -> textura tiled do PICA200. O formato RGBA8 da GPU guarda os bytes como A,B,G,R. */
 static bool upload(C3D_Tex *tex, const uint8_t *rgba, int w, int h) {
-    u32 *lin = (u32 *)linearAlloc((size_t)w * h * 4);
-    if (!lin) return false;
-    for (int i = 0; i < w * h; i++) {
-        const uint8_t *p = rgba + i * 4;
-        lin[i] = ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3];
-    }
-    if (!C3D_TexInit(tex, (u16)w, (u16)h, GPU_RGBA8)) { linearFree(lin); return false; }
-    GSPGPU_FlushDataCache(lin, (size_t)w * h * 4);
-    C3D_SyncDisplayTransfer(lin, GX_BUFFER_DIM(w, h), (u32 *)tex->data, GX_BUFFER_DIM(w, h),
-        GX_TRANSFER_FLIP_VERT(1) | GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_RAW_COPY(0) |
-        GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-        GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
-    linearFree(lin);
+    if (!C3D_TexInit(tex, (u16)w, (u16)h, GPU_RGBA8)) return false;
+    texture_tile_rgba8(tex->data, rgba, w, h);
+    C3D_TexFlush(tex);
     C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
     C3D_TexSetWrap(tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     return true;
@@ -86,6 +77,13 @@ static CoverTex *victim(void) {
     CoverTex *v = &s_slot[0];
     for (int i = 0; i < COVER_LRU; i++) { if (!s_slot[i].key) return &s_slot[i]; if (s_slot[i].stamp < v->stamp) v = &s_slot[i]; }
     return v;
+}
+
+int covers_ready(void) {
+    LightLock_Lock(&s_lock);
+    int ready = s_done.has;
+    LightLock_Unlock(&s_lock);
+    return ready;
 }
 
 int covers_pump(void) {
@@ -111,7 +109,9 @@ int covers_pump(void) {
             uint8_t *d = mini + (y * COVER_MINI + x) * 4;
             d[0] = (uint8_t)(s[0] / (k * k)); d[1] = (uint8_t)(s[1] / (k * k)); d[2] = (uint8_t)(s[2] / (k * k)); d[3] = 255;
         }
-        if (upload(&c->tex, cd->px, COVER_SIZE, COVER_SIZE) && upload(&c->mini, mini, COVER_MINI, COVER_MINI)) {
+        bool full = upload(&c->tex, cd->px, COVER_SIZE, COVER_SIZE);
+        bool small = full && upload(&c->mini, mini, COVER_MINI, COVER_MINI);
+        if (full && small) {
             c->st  = (Tex3DS_SubTexture){ COVER_SIZE, COVER_SIZE, 0.0f, 1.0f, 1.0f, 0.0f };
             c->mst = (Tex3DS_SubTexture){ COVER_MINI, COVER_MINI, 0.0f, 1.0f, 1.0f, 0.0f };
             c->img = (C2D_Image){ &c->tex, &c->st };
@@ -119,7 +119,7 @@ int covers_pump(void) {
             const uint8_t *a = (const uint8_t *)&cd->accent;
             c->accent = C2D_Color32(a[0], a[1], a[2], 255);
             c->valid = 1;
-        }
+        } else if (full) C3D_TexDelete(&c->tex);
     }
     free(cd);
     return 1;
