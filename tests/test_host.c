@@ -38,6 +38,36 @@ static void t_util(void) {
 }
 
 /* busca no biblioteca e grupos de album */
+static void t_search_filters(void) {
+    Track tracks[3] = {0}; Library l = {.tracks = tracks, .count = 3};
+    strcpy(tracks[0].title, "Sem Entender Porque");
+    strcpy(tracks[0].artist, "Crônicas de um Babaca");
+    strcpy(tracks[0].album, "Super Crônico");
+    strcpy(tracks[0].path, "sdmc:/Music/Biblioteca/Rap/Sem Entender.mp3");
+    tracks[0].plays = 4;
+    strcpy(tracks[1].title, "Crônicas");
+    strcpy(tracks[1].artist, "Outro Artista");
+    strcpy(tracks[1].path, "sdmc:/Music/Biblioteca/Grime/Cronicas.mp3");
+    strcpy(tracks[2].title, "Super");
+    strcpy(tracks[2].artist, "Crônicas de um Babaca");
+    int out[4];
+    CHECK(library_search(&l, "entender cronicas", out, 4) == 1 && out[0] == 0);
+    CHECK(library_search(&l, "CRÔNICAS porque super", out, 4) == 1 && out[0] == 0);
+    CHECK(library_search(&l, "cronicas ausente", out, 4) == 0);
+    CHECK(library_search_filtered(&l, "cronicas", SEARCH_TITLE, SEARCH_ANY_PLAY, out, 4) == 1 && out[0] == 1);
+    CHECK(library_search_filtered(&l, "cronicas", SEARCH_ARTIST, SEARCH_ANY_PLAY, out, 4) == 2);
+    CHECK(library_search_filtered(&l, "cronico", SEARCH_ALBUM, SEARCH_ANY_PLAY, out, 4) == 1);
+    CHECK(library_search_filtered(&l, "grime", SEARCH_FOLDER, SEARCH_ANY_PLAY, out, 4) == 1 && out[0] == 1);
+    CHECK(library_search_filtered(&l, "entender", SEARCH_FOLDER, SEARCH_ANY_PLAY, out, 4) == 0);
+    CHECK(library_search_filtered(&l, "", SEARCH_ALL, SEARCH_UNPLAYED, out, 4) == 2);
+    CHECK(library_search_filtered(&l, "", SEARCH_ALL, SEARCH_PLAYED, out, 4) == 1 && out[0] == 0);
+    CHECK(library_search_filtered(&l, "cronicas", SEARCH_ARTIST, SEARCH_UNPLAYED, out, 4) == 1 && out[0] == 2);
+    CHECK(library_search_filtered(&l, "", SEARCH_ALL, SEARCH_ANY_PLAY, out, 4) == 3);
+    CHECK(library_search_filtered(&l, "", SEARCH_ALL, SEARCH_ANY_PLAY, out, 1) == 1);
+    CHECK(library_search_filtered(&l, "", SEARCH_ALL, SEARCH_ANY_PLAY, out, 0) == 0);
+    puts("ok search filters");
+}
+
 static void t_search_albums(void) {
     Library l = {0};
     CHECK(library_scan(&l, M, NULL, NULL) == 0);
@@ -405,7 +435,7 @@ int main(void) {
 #if ENABLE_FLAC
     t_flac();
 #endif
-    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
+    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

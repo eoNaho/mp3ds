@@ -163,18 +163,47 @@ int library_find_path(const Library *l, const char *path) {
     return found;
 }
 
-int library_search(const Library *l, const char *query, int *out, int max) {
+int library_search_filtered(const Library *l, const char *query, SearchField field,
+                            SearchPlays plays, int *out, int max) {
     char q[128];
-    u_norm_ascii(q, sizeof q, query);
+    u_norm_ascii(q, sizeof q, query ? query : "");
+    char *terms[64]; int nt = 0;
+    char *p = q;
+    while (*p && nt < 64) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        terms[nt++] = p;
+        while (*p && *p != ' ') p++;
+        if (*p) *p++ = 0;
+    }
     int n = 0;
-    if (!q[0]) return 0;
     for (int i = 0; i < l->count && n < max; i++) {
-        char f[128];
-        u_norm_ascii(f, sizeof f, l->tracks[i].title);   if (strstr(f, q))   { out[n++] = i; continue; }
-        u_norm_ascii(f, sizeof f, l->tracks[i].artist); if (strstr(f, q))   { out[n++] = i; continue; }
-        u_norm_ascii(f, sizeof f, l->tracks[i].album);  if (l->tracks[i].album[0] && strstr(f, q)) out[n++] = i;
+        const Track *t = &l->tracks[i];
+        if ((plays == SEARCH_UNPLAYED && t->plays) || (plays == SEARCH_PLAYED && !t->plays)) continue;
+        char title[128] = "", artist[128] = "", album[128] = "", folder[256] = "";
+        if (field == SEARCH_ALL || field == SEARCH_TITLE) u_norm_ascii(title, sizeof title, t->title);
+        if (field == SEARCH_ALL || field == SEARCH_ARTIST) u_norm_ascii(artist, sizeof artist, t->artist);
+        if (field == SEARCH_ALL || field == SEARCH_ALBUM) u_norm_ascii(album, sizeof album, t->album);
+        if (field == SEARCH_FOLDER) {
+            char path[256]; u_copy(path, sizeof path, t->path);
+            char *slash = strrchr(path, '/');
+            if (slash) *slash = 0; else path[0] = 0;
+            u_norm_ascii(folder, sizeof folder, path);
+        }
+        int match = 1;
+        for (int k = 0; k < nt; k++) {
+            if (!strstr(title, terms[k]) && !strstr(artist, terms[k]) &&
+                !strstr(album, terms[k]) && !strstr(folder, terms[k])) { match = 0; break; }
+        }
+        if (match) out[n++] = i;
     }
     return n;
+}
+
+int library_search(const Library *l, const char *query, int *out, int max) {
+    char q[128]; u_norm_ascii(q, sizeof q, query ? query : "");
+    if (!q[0]) return 0;
+    return library_search_filtered(l, query, SEARCH_ALL, SEARCH_ANY_PLAY, out, max);
 }
 
 int library_build_albums(const Library *l, AlbumGroup *out, int max) {

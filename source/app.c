@@ -92,7 +92,7 @@ static void rebuild_view(App *a) {
     if (a->lib.count <= 0) return;
     a->view_ids = malloc(sizeof(int) * (size_t)a->lib.count);
     if (!a->view_ids) return;
-    if (a->query[0]) {
+    if (app_filter_active(a)) {
         /* Uma busca sem resultados mantem filt == NULL. Nesse caso a lista
            visivel precisa continuar vazia, e nao voltar a mostrar a
            biblioteca inteira. */
@@ -121,14 +121,18 @@ int app_id_to_row(const App *a, int id) {
     return -1;
 }
 
+int app_filter_active(const App *a) {
+    return a->query[0] || a->search_field != SEARCH_ALL || a->search_plays != SEARCH_ANY_PLAY;
+}
+
 void app_set_filter(App *a, const char *query) {
     free(a->filt); a->filt = NULL; a->nfilt = 0;
-    u_copy(a->query, sizeof a->query, query ? query : "");
-    if (a->query[0] && a->lib.count > 0) {
+    if (query != a->query) u_copy(a->query, sizeof a->query, query ? query : "");
+    if (app_filter_active(a) && a->lib.count > 0) {
         a->filt = malloc(sizeof(int) * (size_t)a->lib.count);
-        if (!a->filt) { a->query[0] = 0; }
+        if (!a->filt) { a->query[0] = 0; a->search_field = SEARCH_ALL; a->search_plays = SEARCH_ANY_PLAY; app_toast(a, "Sem memoria para filtrar"); }
         else {
-            a->nfilt = library_search(&a->lib, a->query, a->filt, a->lib.count);
+            a->nfilt = library_search_filtered(&a->lib, a->query, a->search_field, a->search_plays, a->filt, a->lib.count);
             if (a->nfilt == 0) { free(a->filt); a->filt = NULL; }
         }
     }
@@ -236,10 +240,10 @@ void app_play_library_from(App *a, int idx) {
 
 void app_play_from(App *a, int id) {
     if (a->scan_busy) return;
-    if (a->query[0]) {
+    if (app_filter_active(a)) {
         if (!a->filt || a->nfilt <= 0) return;
         int row = app_id_to_row(a, id);
-        if (row >= 0) { app_play_ids(a, a->filt, a->nfilt, row); return; }
+        if (row >= 0) { app_play_ids(a, a->view_ids, a->nview, row); return; }
     }
     app_play_library_from(a, id);
 }

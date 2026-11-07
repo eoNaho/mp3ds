@@ -14,14 +14,16 @@
 #define LIST_Y   30
 #define TOP_W    400
 #define BOT_W    320
-#define MAX_QUERY 40
+#define MAX_QUERY 96
 
 static C3D_RenderTarget *s_top, *s_bot;
 static C2D_TextBuf s_buf;
 static u32 BG, PANEL, TXT, DIM, ACCENT0;
 
 /* estado do toque */
-static int s_actions_id = -1, s_a_consumed;
+static int s_actions_id = -1, s_a_consumed, s_search_open;
+static const char *SEARCH_FIELDS[] = {"Todos", "Titulo", "Artista", "Album", "Pasta"};
+static const char *SEARCH_PLAYS[] = {"Todas", "Nunca tocadas", "Ja tocadas"};
 static int t_down, t_sx, t_sy, t_ly, t_moved, t_acc;
 
 static void screens_power(App *a, int off) {
@@ -109,15 +111,15 @@ static void ask_query(App *a) {
     if (a->screen_off) screens_power(a, 0);
     static SwkbdState sw;                                 /* ~4 KB; fora da pilha */
     swkbdInit(&sw, SWKBD_TYPE_WESTERN, 1, MAX_QUERY);
-    swkbdSetValidation(&sw, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
-    swkbdSetHintText(&sw, "titulo, artista ou album");
+    swkbdSetValidation(&sw, SWKBD_ANYTHING, 0, 0);
+    swkbdSetHintText(&sw, "Combine palavras: artista e titulo");
     swkbdSetInitialText(&sw, a->query);                   /* App persiste durante a chamada */
     char buf[MAX_QUERY + 1];
     if (swkbdInputText(&sw, buf, sizeof buf) == SWKBD_BUTTON_CONFIRM) {
         app_set_filter(a, buf);
         int n = app_songs_rows(a);
         if (n == 0) app_toast(a, "Nada encontrado");
-        else { char t[64]; snprintf(t, sizeof t, "\"%s\": %d faixa(s)", buf, n); app_toast(a, t); }
+        else { char t[64]; snprintf(t, sizeof t, "%d faixa(s) encontrada(s)", n); app_toast(a, t); }
     }
 }
 
@@ -161,8 +163,27 @@ static void activate(App *a, int row) {
     else app_open_playlist(a, row - 2);
 }
 
+static void search_action(App *a, int action) {
+    if (action == 0) { ask_query(a); return; }
+    if (action == 1) a->search_field = (SearchField)((a->search_field + 1) % SEARCH_FIELD_N);
+    if (action == 2) a->search_plays = (SearchPlays)((a->search_plays + 1) % SEARCH_PLAY_N);
+    if (action == 3) {
+        a->search_field = SEARCH_ALL; a->search_plays = SEARCH_ANY_PLAY;
+        app_set_filter(a, ""); return;
+    }
+    if (action == 4) { s_search_open = 0; return; }
+    app_set_filter(a, a->query);
+}
+
 static void tap(App *a, int x, int y) {
     int t = a->tab;
+    if (s_search_open) {
+        if (y >= 34 && y < 74) search_action(a, 0);
+        else if (y >= 78 && y < 112) search_action(a, 1);
+        else if (y >= 116 && y < 150) search_action(a, 2);
+        else if (y >= 190) search_action(a, x < 160 ? 3 : 4);
+        return;
+    }
     if (s_actions_id >= 0) {
         if (x >= 20 && x < 300 && y >= 48 && y < 144) {
             int id = s_actions_id;
@@ -185,12 +206,9 @@ static void tap(App *a, int x, int y) {
         else if (x < 172) a->tab = TAB_ALBUMS;
         else if (x < 210) { a->tab = TAB_PLAYLISTS; app_refresh_playlists(a); }
         else if (x >= 282) screens_power(a, 1);
-        else if (x >= 210 && x < 245) app_cycle_sort(a);
-        /* A lupa ocupa uma area um pouco maior que o desenho para facilitar
-           o toque no 3DS; o texto da ordenacao continua na parte esquerda. */
-        else if (x >= 238 && x < 286 && t == TAB_SONGS) {
-            if (a->query[0]) { app_set_filter(a, ""); a->sel[TAB_SONGS] = a->top[TAB_SONGS] = 0; }
-            else ask_query(a);
+        else if (x >= 210 && x < 245 && t == TAB_SONGS) app_cycle_sort(a);
+        else if (x >= 245 && x < 282 && t == TAB_SONGS && !a->scan_busy) {
+            s_search_open = 1; s_eq_open = 0;
         }
     } else if (y < LIST_Y + ROWS * ROW_H) {
         int row = a->top[t] + (y - LIST_Y) / ROW_H;
@@ -224,6 +242,17 @@ int ui_input(App *a) {
     if (a->screen_off) { if (kd) screens_power(a, 0); return 1; }   /* qualquer toque/botao acorda */
 
     if (kd & KEY_START) a->quit = 1;
+    if (s_search_open && a->scan_busy) s_search_open = 0;
+    if (s_search_open) {
+        s_a_consumed = 1;
+        if (kd & KEY_B) search_action(a, 4);
+        else if (kd & KEY_A) search_action(a, 0);
+        else if (kd & KEY_X) search_action(a, 1);
+        else if (kd & KEY_Y) search_action(a, 2);
+        if (kd & KEY_TOUCH) { t_down = 1; t_sx = tp.px; t_sy = tp.py; }
+        if ((ku & KEY_TOUCH) && t_down) { t_down = 0; tap(a, t_sx, t_sy); }
+        return dirty;
+    }
     if (kd & KEY_SELECT) {
         a->tab = (Tab)((a->tab + 1) % TAB_N);
         if (a->tab == TAB_PLAYLISTS) app_refresh_playlists(a);
@@ -363,6 +392,26 @@ static void draw_bottom(App *a) {
     const CoverTex *cv = cur ? covers_get(cur->art_key, cur->path) : NULL;
     u32 accent = cv ? cv->accent : ACCENT0;
 
+    if (s_search_open) {
+        char b[160], query[160];
+        text_center("Busca e filtros", 160, 8, 0.6f, TXT);
+        rrect(8, 34, 304, 40, 6, PANEL);
+        u_utf8_trunc(query, sizeof query, a->query[0] ? a->query : "Toque para digitar", 36);
+        text(query, 16, 43, 0.42f, TXT);
+        rrect(8, 78, 304, 34, 6, PANEL);
+        snprintf(b, sizeof b, "X  Buscar em: %s", SEARCH_FIELDS[a->search_field]);
+        text(b, 16, 86, 0.45f, TXT);
+        rrect(8, 116, 304, 34, 6, PANEL);
+        snprintf(b, sizeof b, "Y  Reproducoes: %s", SEARCH_PLAYS[a->search_plays]);
+        text(b, 16, 124, 0.45f, TXT);
+        snprintf(b, sizeof b, "%d de %d faixas", app_songs_rows(a), a->lib.count);
+        text_center(b, 160, 160, 0.44f, accent);
+        rrect(8, 190, 146, 40, 6, PANEL);
+        rrect(166, 190, 146, 40, 6, accent);
+        text_center("Limpar tudo", 81, 202, 0.45f, TXT);
+        text_center("B  Ver resultados", 239, 202, 0.4f, BG);
+        return;
+    }
     /* cabecalho: Musicas | Fila | Albuns | Playlists | lupa | lua */
     rect(0, 0, BOT_W, 28, PANEL);
     text("Musicas", 8, 5, 0.44f, t == TAB_SONGS ? TXT : DIM);
@@ -371,12 +420,7 @@ static void draw_bottom(App *a) {
     text("Playlists", 176, 5, 0.44f, t == TAB_PLAYLISTS ? TXT : DIM);
     static const float ux[4] = {4, 76, 120, 172}, uw[4] = {62, 40, 50, 66};
     rect(ux[t], 25, uw[t], 3, accent);
-    if (t == TAB_SONGS && a->query[0]) {
-        icon_clear(263, 14, accent);
-        if (a->nfilt == 0) text("(vazio)", 192, 16, 0.3f, DIM);
-    } else {
-        icon_search(263, 14, t == TAB_SONGS ? TXT : DIM);
-    }
+    icon_search(263, 14, t == TAB_SONGS && app_filter_active(a) ? accent : DIM);
     if (t == TAB_SONGS) text(app_sort_name(a->sort_mode), 218, 5, 0.28f, DIM);
     C2D_DrawCircleSolid(296, 14, 0.6f, 7, DIM); C2D_DrawCircleSolid(299, 12, 0.7f, 6, PANEL);   /* "lua": tela off */
 
@@ -386,8 +430,8 @@ static void draw_bottom(App *a) {
     int n = list_count(a);
     char b[160], c[96];
     if (t == TAB_SONGS && n == 0) {
-        text_center(a->query[0] ? "Nada encontrado" : "Biblioteca vazia", BOT_W / 2.0f, 80, 0.5f, DIM);
-        if (!a->query[0]) text_center("Coloque MP3/FLAC em sdmc:/Music", BOT_W / 2.0f, 106, 0.4f, DIM);
+        text_center(app_filter_active(a) ? "Nada encontrado" : "Biblioteca vazia", BOT_W / 2.0f, 80, 0.5f, DIM);
+        if (!app_filter_active(a)) text_center("Coloque MP3/FLAC em sdmc:/Music", BOT_W / 2.0f, 106, 0.4f, DIM);
     } else if (t == TAB_FILA && n == 0) {
         text_center("Fila vazia", BOT_W / 2.0f, 70, 0.5f, DIM);
         text_center("Toque uma faixa na aba Musicas", BOT_W / 2.0f, 96, 0.4f, DIM);

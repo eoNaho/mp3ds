@@ -16,7 +16,9 @@ typedef struct {
     int sel[TAB_N], top[TAB_N];              /* selecao e 1a linha visivel, por aba */
     /* busca em TAB_SONGS: linhas sob filtro */
     int *filt; int nfilt;                    /* ids de faixa; NULL = lista inteira */
-    char query[48];
+    char query[128];
+    SearchField search_field;
+    SearchPlays search_plays;
     int *view_ids; int nview;                /* ordem visivel da aba Musicas */
     SortMode sort_mode;
     int cur;                                 /* indice da faixa tocando (em lib.tracks) ou -1 */
@@ -46,6 +48,7 @@ void app_tick(App *a);                                  /* 1x por frame: fila, r
 int  app_songs_rows(const App *a);
 int  app_row_to_id(const App *a, int row);              /* -1 se fora do filtro */
 int  app_id_to_row(const App *a, int id);               /* -1 se filtrado */
+int app_filter_active(const App *a);
 void app_set_filter(App *a, const char *query);         /* "" limpa o filtro */
 void app_set_sort(App *a, SortMode mode);
 const char *app_sort_name(SortMode mode);

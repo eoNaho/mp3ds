@@ -43,7 +43,12 @@ int  library_save_index(const Library *l, const char *idx_path); /* 0 = ok */
 int  library_scan(Library *l, const char *root, ScanProgress cb, void *ud);
 void library_sort(Library *l);                                    /* artista, album, faixa, titulo */
 int  library_find_path(const Library *l, const char *path);       /* indice ou -1 */
-/* Busca texto: substrings em titulo/artista/album, ignorando caixa e acentos.
+typedef enum { SEARCH_ALL = 0, SEARCH_TITLE, SEARCH_ARTIST, SEARCH_ALBUM, SEARCH_FOLDER, SEARCH_FIELD_N } SearchField;
+typedef enum { SEARCH_ANY_PLAY = 0, SEARCH_UNPLAYED, SEARCH_PLAYED, SEARCH_PLAY_N } SearchPlays;
+/* Palavras combinadas com AND, em qualquer ordem. Query vazia permite filtrar so por historico. */
+int library_search_filtered(const Library *l, const char *query, SearchField field,
+                            SearchPlays plays, int *out, int max);
+/* Busca palavras em titulo/artista/album, ignorando caixa e acentos; query vazia retorna 0.
    Preenche out (max) com indices de faixa em ordem da biblioteca; retorna a quantidade. */
 int  library_search(const Library *l, const char *query, int *out, int max);
 /* Agrupa as faixas ordenadas em albuns (artista+album). out deve ter espaco para l->count. */

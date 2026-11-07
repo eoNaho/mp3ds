@@ -60,10 +60,18 @@ e `last_played`; índices antigos são migrados automaticamente para o formato v
 | Fila: A / toque | tocar a partir do slot escolhido |
 | Fila: X ou ✕ na borda | remover da fila |
 | Fila: ←/→ | mover ±1 posição (a faixa tocando acompanha) |
-| 🔍 (cabeçalho) | abrir teclado do 3DS e filtrar a lista por título/artista/álbum; ✕ limpa o filtro (a fila passa a ser o resultado da busca) |
+| 🔍 (cabeçalho) | abre Busca e filtros: A edita o texto, X alterna Todos/Título/Artista/Álbum/Pasta, Y alterna Todas/Nunca tocadas/Já tocadas; B mostra os resultados |
 | 🌙 ou qualquer botão/tecla | desliga/religa as telas |
 | EQ (rodapé) | abre painel com 6 presets (Desligado / Sub / Graves / Voz / Brilho / Suave); toque um preset (voltinhas são o perfil de frequência) |
 | Toque | tocar na lista, arrastar para rolar, botões embaixo |
+
+A busca combina todas as palavras digitadas, em qualquer ordem, ignorando caixa e
+acentos: `cronicas entender` encontra uma faixa com “Crônicas” no artista e
+“Entender” no título. O filtro de campo restringe todas as palavras ao campo
+escolhido; Pasta procura no diretório, sem incluir o nome do arquivo. Os filtros
+podem ser usados sem texto, inclusive para listar só músicas nunca tocadas.
+O painel mostra a contagem de resultados e permite editar o texto ou limpar todos
+os filtros. Tocar um resultado monta a fila na mesma ordem visível da lista.
 
 ## Testes no PC
 ```
