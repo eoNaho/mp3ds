@@ -142,6 +142,14 @@ static void clamp_view(App *a) {
     if (a->top[t] < 0) a->top[t] = 0;
 }
 
+static void cycle_tab(App *a, int dir) {
+    int next = (int)a->tab + dir;
+    if (next < 0) next = TAB_N - 1;
+    if (next >= TAB_N) next = 0;
+    a->tab = (Tab)next;
+    if (a->tab == TAB_PLAYLISTS) app_refresh_playlists(a);
+}
+
 static void activate(App *a, int row) {
     if (a->scan_busy) return;
     if (a->tab == TAB_SONGS) { app_play_from(a, app_row_to_id(a, row)); return; }
@@ -207,6 +215,17 @@ int ui_input(App *a) {
         a->tab = (Tab)((a->tab + 1) % TAB_N);
         if (a->tab == TAB_PLAYLISTS) app_refresh_playlists(a);
     }
+
+    /* A + L/R troca de aba; L/R sozinho continua sendo anterior/proxima faixa.
+       Aceita tanto A pressionado antes de L/R quanto os dois juntos. */
+    int tab_left = ((kd & KEY_L) && (kh & KEY_A)) || ((kd & KEY_A) && (kh & KEY_L));
+    int tab_right = ((kd & KEY_R) && (kh & KEY_A)) || ((kd & KEY_A) && (kh & KEY_R));
+    if (tab_left || tab_right) {
+        cycle_tab(a, tab_left ? -1 : 1);
+        clamp_view(a);
+        return dirty;
+    }
+
     int t = a->tab;
     if (kr & (KEY_DUP | KEY_CPAD_UP))     a->sel[t]--;
     if (kr & (KEY_DDOWN | KEY_CPAD_DOWN)) a->sel[t]++;

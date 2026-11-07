@@ -43,7 +43,8 @@ e `last_played`; índices antigos são migrados automaticamente para o formato v
 | A | tocar selecionado |
 | B | pausar/continuar (durante o scan: cancela) |
 | ←/→ | -10 s / +10 s |
-| L / R | anterior / próxima |
+| L / R | anterior / próxima faixa |
+| A + L / A + R | aba anterior / próxima (Músicas, Fila, Álbuns, Playlists) |
 | X / Y | shuffle / repeat |
 | SELECT | alternar Músicas ↔ Fila ↔ Álbuns ↔ Playlists |
 | START | sair |
