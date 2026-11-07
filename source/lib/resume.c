@@ -1,3 +1,4 @@
+#include "config.h"
 #include "resume.h"
 #include "util.h"
 #include <stdio.h>
@@ -11,7 +12,7 @@ int resume_load(const char *file, char *path, size_t cap, uint32_t *ms) {
     if (path && cap) path[0] = 0;
     FILE *f = fopen(file, "rb");
     if (!f) return -1;
-    char line[300], p[256];
+    char line[64], p[TRACK_PATH_MAX + 2];
     unsigned long m;
     int rc = -1;
     if (fgets(line, sizeof line, f) && fgets(p, sizeof p, f) &&
@@ -27,7 +28,7 @@ int resume_load(const char *file, char *path, size_t cap, uint32_t *ms) {
 
 int resume_save(const char *file, const char *path, uint32_t ms) {
     if (!path || !path[0] || ms == 0) { remove(file); return 0; }
-    char tmp[300];
+    char tmp[TRACK_PATH_MAX + 8];
     if (snprintf(tmp, sizeof tmp, "%s.tmp", file) >= (int)sizeof tmp) return -1;
     FILE *f = fopen(tmp, "wb");
     if (!f) return -1;

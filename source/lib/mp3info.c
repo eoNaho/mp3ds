@@ -49,17 +49,32 @@ int mp3info_probe(const char *path, long start, Mp3Info *o) {
         o->audio_bytes = fsize - o->first_frame_off;
 
         int side = (ver == 3) ? (ch == 1 ? 17 : 32) : (ch == 1 ? 9 : 17);
-        const uint8_t *x = buf + i + 4 + side;
-        if (i + 4 + side + 16 <= n && (!memcmp(x, "Xing", 4) || !memcmp(x, "Info", 4))) {
+        int crc = (buf[i + 1] & 1) ? 0 : 2;
+        const uint8_t *frame_end = buf + (i + (size_t)fl < n ? i + (size_t)fl : n);
+        size_t xoff = i + 4 + crc + side;
+        const uint8_t *x = xoff <= n && n - xoff >= 8 ? buf + xoff : NULL;
+        if (x && x <= frame_end && (size_t)(frame_end - x) >= 8 && (!memcmp(x, "Xing", 4) || !memcmp(x, "Info", 4))) {
             o->vbr = (x[0] == 'X');
+            o->info_frame_bytes = fl;
             uint32_t flags = be32(x + 4);
             const uint8_t *p = x + 8;
-            if (flags & 1) { o->frames = be32(p); p += 4; }     /* ordem: frames, bytes, toc, qualidade */
-            if (flags & 2) p += 4;
-            if (flags & 4 && p + 100 <= buf + n) {             /* TOC: byte (0..255) a 0/25..100% do audio */
-                memcpy(o->toc, p, 100);
-                o->has_toc = 1;
-                p += 100;
+            int valid = 1;
+            if (flags & 1) { if ((size_t)(frame_end - p) < 4) valid = 0; else { o->frames = be32(p); p += 4; } }
+            if (flags & 2) { if ((size_t)(frame_end - p) < 4) valid = 0; else { o->audio_bytes = be32(p); p += 4; } }
+            if (flags & 4) {
+                if ((size_t)(frame_end - p) < 100) valid = 0;
+                else { memcpy(o->toc, p, 100); o->has_toc = 1; p += 100; }
+            }
+            if (flags & 8) { if ((size_t)(frame_end - p) < 4) valid = 0; else p += 4; }
+            if (valid && (size_t)(frame_end - p) >= 36 &&
+                (!memcmp(p, "LAME", 4) || !memcmp(p, "Lavc", 4) || !memcmp(p, "Lavf", 4))) {
+                o->encoder_delay = ((uint32_t)p[21] << 4) | (p[22] >> 4);
+                o->encoder_padding = ((uint32_t)(p[22] & 15) << 8) | p[23];
+                uint64_t samples = (uint64_t)o->frames * (ver == 3 ? 1152 : 576);
+                if (samples > o->encoder_delay + o->encoder_padding && o->encoder_padding >= 529) {
+                    o->playable_frames = samples - o->encoder_delay - o->encoder_padding;
+                    o->has_gapless = 1;
+                }
             }
         } else if (i + 36 + 18 <= n && !memcmp(buf + i + 36, "VBRI", 4)) {
             o->vbr = 1;
@@ -71,6 +86,7 @@ int mp3info_probe(const char *path, long start, Mp3Info *o) {
         } else if (br > 0) {
             o->duration_ms = (uint32_t)((uint64_t)o->audio_bytes * 8 / (uint64_t)br);
         }
+        if (o->has_gapless) o->duration_ms = (uint32_t)(o->playable_frames * 1000 / sr);
         rc = 0;
         break;
     }

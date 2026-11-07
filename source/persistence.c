@@ -1,4 +1,5 @@
 #include <3ds.h>
+#include <string.h>
 #include "persistence.h"
 #include "config.h"
 
@@ -39,12 +40,24 @@ int persistence_init(void) {
 }
 
 int persistence_submit(const Library *lib, const Queue *q, const char *path, uint32_t ms, int index) {
+    return persistence_submit_parts(lib, q, path, ms, 1, index);
+}
+
+int persistence_submit_parts(const Library *lib, const Queue *q, const char *path, uint32_t ms, int session, int index) {
     if (!s_thread) return -1;
-    SaveState *job = save_state_capture(lib, q, path, ms, index);
+    SaveState *job = save_state_capture_parts(lib, q, path, ms, session, index);
     if (!job) return -1;
     LightLock_Lock(&s_lock);
     SaveState *old = s_pending;
-    if (old && old->save_index) job->save_index = 1;
+    if (old && (old->save_session || old->save_index) && !session && !index) {
+        /* Um resume leve nao pode descartar a sessao/indice ainda pendente. */
+        old->resume_ms = job->resume_ms;
+        memcpy(old->resume_path, job->resume_path, sizeof old->resume_path);
+        SaveState *swap = old; old = job; job = swap;
+    } else if (old) {
+        job->save_index |= old->save_index;
+        job->save_session |= old->save_session;
+    }
     s_pending = job;
     LightLock_Unlock(&s_lock);
     save_state_free(old);

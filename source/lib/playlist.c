@@ -1,3 +1,4 @@
+#include "config.h"
 #include "playlist.h"
 #include "util.h"
 #include <dirent.h>
@@ -78,7 +79,7 @@ int playlist_load(const char *file, char (*paths)[PL_PATH_MAX], int max) {
     char base[PL_PATH_MAX]; u_copy(base, sizeof base, file);
     char *sl = strrchr(base, '/'); if (sl) *sl = 0; else base[0] = 0;
 
-    char line[512]; int n = 0, first = 1;
+    char line[TRACK_PATH_MAX + 8]; int n = 0, first = 1;
     while (n < max && fgets(line, sizeof line, f)) {
         char *s = line;
         if (first && (uint8_t)s[0] == 0xEF && (uint8_t)s[1] == 0xBB && (uint8_t)s[2] == 0xBF) s += 3;   /* BOM */

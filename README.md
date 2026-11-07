@@ -42,9 +42,34 @@ escritas no SD na thread da interface. Ao sair, o app aguarda o último salvamen
 As capas são convertidas diretamente para a textura, e a troca ocorre depois do
 frame anterior terminar, evitando esperas extras de transferência da GPU.
 
+O índice v3 aceita caminhos de até 1023 bytes, títulos de até 383 bytes e
+artista/álbum/album artist de até 255 bytes, sempre sem cortar caracteres UTF-8.
+O scan informa caminhos ignorados por tamanho ou profundidade. Coletâneas usam
+album artist (TPE2), discos usam TPOS, e a capa frontal APIC tipo 3 tem preferência.
+A busca mantém CJK e letras como č, ř e ł, com campos normalizados em memória;
+caminhos são consultados por hash para restaurar filas grandes.
+
+Capas novas usam RGB565 no cache (32 KiB mais cabeçalho); caches RGBA8 antigos
+continuam legíveis. O carregamento tenta as faixas do álbum antes de criar um
+marcador sem capa. “Reescanear” limpa esses marcadores e o cache em memória.
+
+A thread de áudio pré-abre a próxima faixa usando offset/TOC do índice, com
+validação de tamanho/mtime. Para taxas iguais, enfileira a próxima sem drenar o
+DSP. Tags LAME válidas removem delay/padding; arquivos sem essas tags conservam
+seu silêncio de codificação. Taxas diferentes ainda exigem reconfigurar o DSP.
+O teste com DSP simulado verifica continuidade e sincronização da interface;
+latência e consumo reais ainda precisam ser medidos em Old/New 3DS.
+
+O auto-save periódico grava somente `resume.txt`; sessão/fila são gravadas quando
+mudam, e o histórico ao pausar/sair. Com a tampa fechada ou as telas desligadas,
+o desenho é suspenso e o áudio continua.
+
+ReplayGain continua opcional. A troca do JPEG para libjpeg-turbo com escala DCT
+fica para uma comparação de tempo/RAM no console antes de adicionar a dependência.
+
 O estado de retomada (`resume.txt`) guarda a última faixa e posição: ao abrir de novo
 e tocar a mesma faixa, ela começa de onde parou. O índice também guarda `added`, `plays`
-e `last_played`; índices antigos são migrados automaticamente para o formato v2.
+e `last_played`; índices antigos são migrados automaticamente para o formato v3. A migracao rele as tags uma vez e preserva o historico.
 
 ## Controles
 | | |
@@ -81,6 +106,8 @@ O painel mostra a contagem de resultados e permite editar o texto ou limpar todo
 os filtros. Tocar um resultado monta a fila na mesma ordem visível da lista.
 
 ## Testes no PC
+Requer GCC, Python 3 e os executáveis `flac` e `lame` no PATH; devkitARM é necessário somente para compilar o aplicativo.
+
 ```
 pip install lameenc mutagen pillow
 make test        # gera MP3 sintéticos com tags/capas e roda tudo com sanitizers

@@ -26,12 +26,12 @@ typedef struct {
     int screen_off, quit, want_rescan;
     char toast[64]; int toast_frames;
     /* retomada da ultima faixa/posicao */
-    char resume_path[256]; uint32_t resume_ms; int resume_used;
+    char resume_path[TRACK_PATH_MAX]; uint32_t resume_ms; int resume_used;
     unsigned save_count;                     /* contagem para o auto-save do estado */
+    int session_dirty;
     int stats_dirty;                         /* plays/last_played ainda nao gravados */
     /* scan em thread (3DS): a UI nao toca em lib enquanto scan_busy */
     volatile int scan_busy, scan_found, scan_abort;
-    Track *scan_old; unsigned scan_frames;   /* lib antiga: liberada com folga apos a troca */
 } App;
 
 void app_init(App *a);

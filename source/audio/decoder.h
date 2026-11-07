@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "mp3info.h"
 
 typedef struct Decoder Decoder;
 
@@ -10,3 +11,6 @@ uint32_t decoder_duration_ms(const Decoder *d);
 /* Preenche out com frames estereo intercalados (L,R). Retorna frames lidos; 0 = fim. */
 int      decoder_read(Decoder *d, int16_t *out, int max_frames);
 void     decoder_seek_ms(Decoder *d, uint32_t ms);
+
+/* Usa metadados do indice quando size/mtime ainda coincidem. */
+Decoder *decoder_open_cached(const char *path, const Mp3Info *info, uint32_t size, int64_t mtime);

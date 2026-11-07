@@ -1,4 +1,5 @@
 #include "id3.h"
+#include "util.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -30,7 +31,11 @@ static void text_to_utf8(const uint8_t *s, size_t n, int enc, char *out, size_t 
     if (enc == 0) {
         for (; i < n && s[i]; i++) put_cp(s[i], out, cap, &o);
     } else if (enc == 3) {
-        for (; i < n && s[i]; i++) if (o + 1 < cap) out[o++] = (char)s[i];
+        while (i < n && s[i]) {
+            size_t len = s[i] < 0x80 ? 1 : s[i] < 0xE0 ? 2 : s[i] < 0xF0 ? 3 : 4;
+            if (i + len > n || o + len >= cap) break;
+            memcpy(out + o, s + i, len); o += len; i += len;
+        }
     } else {
         int be = (enc == 2);
         if (enc == 1 && n >= 2) {
@@ -52,7 +57,7 @@ static void text_to_utf8(const uint8_t *s, size_t n, int enc, char *out, size_t 
 }
 
 static void read_text(FILE *f, long dpos, uint32_t fs, char *dst, size_t cap) {
-    uint8_t b[300];
+    uint8_t b[2 * TITLE_MAX + 4];
     size_t n = fs < sizeof b ? fs : sizeof b;
     if (n < 2) return;
     fseek(f, dpos, SEEK_SET);
@@ -77,7 +82,7 @@ int id3_read(const char *path, Id3Info *o) {
 
     uint8_t h[10];
     if (fread(h, 1, 10, f) == 10 && !memcmp(h, "ID3", 3) && h[3] >= 2 && h[3] <= 4) {
-        int ver = h[3];
+        int ver = h[3], art_type = -1;
         uint8_t flags = h[5];
         uint32_t size = synchsafe(h + 6);
         long pos = 10, end = 10 + (long)size;
@@ -113,12 +118,16 @@ int id3_read(const char *path, Id3Info *o) {
             memcpy(id, fh, idlen);
             if (!strcmp(id, "TIT2") || !strcmp(id, "TT2")) read_text(f, dpos, fs, o->title, sizeof o->title);
             else if (!strcmp(id, "TPE1") || !strcmp(id, "TP1")) read_text(f, dpos, fs, o->artist, sizeof o->artist);
+            else if (!strcmp(id, "TPE2") || !strcmp(id, "TP2")) read_text(f, dpos, fs, o->album_artist, sizeof o->album_artist);
+            else if (!strcmp(id, "TPOS") || !strcmp(id, "TPA")) {
+                char t[16] = {0}; read_text(f, dpos, fs, t, sizeof t); o->disc = atoi(t);
+            }
             else if (!strcmp(id, "TALB") || !strcmp(id, "TAL")) read_text(f, dpos, fs, o->album, sizeof o->album);
             else if (!strcmp(id, "TRCK") || !strcmp(id, "TRK")) {
                 char t[16] = {0};
                 read_text(f, dpos, fs, t, sizeof t);
                 o->track = atoi(t);                  /* "3/12" -> 3 */
-            } else if ((!strcmp(id, "APIC") || !strcmp(id, "PIC")) && !o->art_offset) {
+            } else if ((!strcmp(id, "APIC") || !strcmp(id, "PIC")) && art_type != 3) {
                 uint8_t b[512];
                 size_t n = fs < sizeof b ? fs : sizeof b, p = 1;
                 fseek(f, dpos, SEEK_SET);
@@ -126,10 +135,11 @@ int id3_read(const char *path, Id3Info *o) {
                 int enc = b[0];
                 if (ver == 2) p += 3;                /* formato de 3 letras */
                 else { while (p < n && b[p]) p++; p++; }   /* mime */
-                p++;                                 /* tipo da imagem */
+                if (p >= n) continue;
+                int type = b[p++];                /* 3 = capa frontal */
                 if (enc == 1 || enc == 2) { while (p + 1 < n && !(b[p] == 0 && b[p + 1] == 0)) p += 2; p += 2; }
                 else { while (p < n && b[p]) p++; p++; }   /* descricao */
-                if (p <= n && p < fs) { o->art_offset = dpos + (long)p; o->art_size = (long)fs - (long)p; }
+                if (p <= n && p < fs && (!o->art_offset || type == 3)) { art_type = type; o->art_offset = dpos + (long)p; o->art_size = (long)fs - (long)p; }
             }
         }
     }

@@ -4,6 +4,7 @@
 #include "session.h"
 #include "persistence.h"
 #include "util.h"
+#include "cover.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,8 +31,9 @@ static int playlist_cmp(const void *pa, const void *pb) {
 }
 
 void app_refresh_playlists(App *a) {
-    PlaylistInfo found[MAX_PLAYLISTS];
-    PlaylistInfo extra[MAX_PLAYLISTS];
+    PlaylistInfo *found = malloc(sizeof(PlaylistInfo) * MAX_PLAYLISTS);
+    PlaylistInfo *extra = malloc(sizeof(PlaylistInfo) * MAX_PLAYLISTS);
+    if (!found || !extra) { free(found); free(extra); return; }
     /* Prefer the copy next to the music. An older copy in DATA_DIR must not
        hide the playlist that was just copied to Music/Playlists. */
     int n = playlist_scan(MUSIC_ROOT, found, MAX_PLAYLISTS);
@@ -46,10 +48,11 @@ void app_refresh_playlists(App *a) {
     qsort(found, n, sizeof *found, playlist_cmp);
     memcpy(a->pls, found, sizeof(PlaylistInfo) * (size_t)n);
     a->npl = n;
+    free(found); free(extra);
 }
 
 int app_needs_initial_scan(const App *a) {
-    if (!a->index_loaded) return 1;
+    if (!a->index_loaded || a->lib.needs_upgrade) return 1;
 
     /* Um índice antigo pode continuar exibindo as faixas depois que elas
        foram reorganizadas no SD. Nesse caso as músicas aparecem na tela, mas
@@ -182,7 +185,7 @@ void app_open_playlist(App *a, int i) {
     }
     for (int k = 0; k < n; k++) { int id = library_find_path(&a->lib, paths[k]); if (id >= 0) ids[m++] = id; }
     if (m == 0) app_toast(a, "Playlist vazia ou faixas nao encontradas");
-    else { char t[64]; snprintf(t, sizeof t, "%s: %d faixas", a->pls[i].name, m); app_toast(a, t); app_play_ids(a, ids, m, 0); }
+    else { char name[40]; u_utf8_trunc(name, sizeof name, a->pls[i].name, 20); char t[64]; snprintf(t, sizeof t, "%s: %d faixas", name, m); app_toast(a, t); app_play_ids(a, ids, m, 0); }
     free(paths); free(ids);
 }
 
@@ -209,13 +212,14 @@ void app_save_queue_playlist(App *a) {
 static void start_track(App *a, int id) {
     if (id < 0 || id >= a->lib.count) { player_stop(); a->cur = -1; return; }
     a->cur = id;
+    a->session_dirty = 1;
     const char *p = a->lib.tracks[id].path;
     /* 1a reproducao da sessao: se for a ultima faixa, retoma do ponto salvo */
     if (!a->resume_used && a->resume_ms > 2000 && !strcmp(p, a->resume_path)) {
-        player_play_seek(p, a->resume_ms);
+        player_play_track(&a->lib.tracks[id], a->resume_ms);
         a->resume_used = 1;
     } else {
-        player_play(p);
+        player_play_track(&a->lib.tracks[id], 0);
     }
     library_record_play(&a->lib, id, 0);
     a->stats_dirty = 1;
@@ -269,6 +273,7 @@ void app_queue_play_from(App *a, int slot) {
 
 int app_queue_remove(App *a, int slot) {
     if (a->scan_busy || a->q.count == 0) return queue_current_slot(&a->q);
+    a->session_dirty = 1;
     int cur = queue_remove_slot(&a->q, slot);
     if (a->q.count == 0) { player_stop(); a->cur = -1; app_save_resume(a); }
     return cur;
@@ -276,6 +281,7 @@ int app_queue_remove(App *a, int slot) {
 
 int app_queue_move(App *a, int slot, int dir) {
     if (a->scan_busy || a->q.count == 0) return queue_current_slot(&a->q);
+    a->session_dirty = 1;
     return queue_move_slot(&a->q, slot, dir);
 }
 
@@ -301,6 +307,7 @@ void app_enqueue(App *a, int id, int next) {
     if (queue_insert(&a->q, id, next) < 0) {
         app_toast(a, "Sem memoria para adicionar a faixa"); return;
     }
+    a->session_dirty = 1;
     app_save_resume(a);
     app_toast(a, next ? "Adicionada para tocar a seguir" : "Adicionada ao fim da fila");
 }
@@ -323,9 +330,10 @@ void app_seek_rel(App *a, int ms) {
     player_seek((uint32_t)t);
 }
 
-void app_toggle_shuffle(App *a) { queue_set_shuffle(&a->q, !a->q.shuffle); app_toast(a, a->q.shuffle ? "Aleatorio: ligado" : "Aleatorio: desligado"); }
+void app_toggle_shuffle(App *a) { a->session_dirty = 1; queue_set_shuffle(&a->q, !a->q.shuffle); app_toast(a, a->q.shuffle ? "Aleatorio: ligado" : "Aleatorio: desligado"); }
 
 void app_cycle_repeat(App *a) {
+    a->session_dirty = 1;
     a->q.repeat = (RepeatMode)((a->q.repeat + 1) % 3);
     app_toast(a, a->q.repeat == REPEAT_OFF ? "Repetir: desligado" : a->q.repeat == REPEAT_ALL ? "Repetir: tudo" : "Repetir: uma faixa");
 }
@@ -341,22 +349,28 @@ void app_save_resume(App *a) {
     } else if (a->cur < 0) {
         a->resume_path[0] = 0; a->resume_ms = 0;
     }
-    if (persistence_submit(&a->lib, &a->q, a->resume_path, a->resume_ms, a->stats_dirty) == 0)
-        a->stats_dirty = 0;
-    else { a->stats_dirty = 1; app_toast(a, "Nao consegui agendar o salvamento"); }
+    if (persistence_submit_parts(&a->lib, &a->q, a->resume_path, a->resume_ms, a->session_dirty, a->stats_dirty) == 0) {
+        a->stats_dirty = a->session_dirty = 0;
+    }
+    else { a->stats_dirty = a->session_dirty = 1; app_toast(a, "Nao consegui agendar o salvamento"); }
 }
 
 /* ---------------- scan (sincronico para o arranque; thread durante uso) ---------------- */
 
 int app_rescan(App *a, ScanProgress cb, void *ud) {
     player_stop();
+    a->session_dirty = 1;
     queue_free(&a->q); queue_init(&a->q, (unsigned)time(NULL));
     a->cur = -1;
+    cover_clear_missing(COVER_DIR);
     int rc = library_scan(&a->lib, MUSIC_ROOT, cb, ud);
     library_save_index(&a->lib, INDEX_PATH);
     app_build_albums(a);
     app_set_filter(a, a->query);        /* re-executa o filtro atual se houver */
     rebuild_view(a);
+    if (a->lib.skipped_paths) {
+        char b[64]; snprintf(b, sizeof b, "Scan: %d caminhos longos/profundos ignorados", a->lib.skipped_paths); app_toast(a, b);
+    }
     return rc;
 }
 
@@ -383,8 +397,8 @@ static int scan_cb(int found, const char *cur, void *ud) {
 
 static void scan_worker(void *arg) {
     App *a = arg;
-    memset(&s_fresh, 0, sizeof s_fresh);
     osSetSpeedupEnable(true);            /* clock cheia enquanto decodifica tags de faixas novas */
+    cover_clear_missing(COVER_DIR);
     library_scan(&s_fresh, MUSIC_ROOT, scan_cb, a);
     osSetSpeedupEnable(false);
     library_save_index(&s_fresh, INDEX_PATH);
@@ -397,13 +411,21 @@ void app_start_rescan(App *a) {
     if (persistence_busy()) { a->want_rescan = 1; return; }
     a->scan_abort = 0;
     a->scan_found = 0;
-    a->scan_frames = 0;
     player_stop();
+    a->session_dirty = 1;
     queue_free(&a->q); queue_init(&a->q, (unsigned)time(NULL));
     a->cur = -1;
     s32 prio = 0x30; svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    memset(&s_fresh, 0, sizeof s_fresh);
+    s_fresh.needs_upgrade = a->lib.needs_upgrade;
+    if (a->lib.count) {
+        s_fresh.tracks = malloc(sizeof(Track) * (size_t)a->lib.count);
+        if (!s_fresh.tracks) { app_toast(a, "Sem memoria para reescanear"); return; }
+        memcpy(s_fresh.tracks, a->lib.tracks, sizeof(Track) * (size_t)a->lib.count);
+        s_fresh.count = s_fresh.cap = a->lib.count;
+    }
     s_scan_thread = threadCreate(scan_worker, a, 96 * 1024, prio + 1, -2, false);
-    if (!s_scan_thread) return;
+    if (!s_scan_thread) { library_free(&s_fresh); return; }
     a->scan_busy = 1;
 }
 
@@ -413,50 +435,72 @@ void app_start_rescan(App *a) {
 
 void app_tick(App *a) {
     if (persistence_take_error()) {
-        a->stats_dirty = 1;
+        a->stats_dirty = a->session_dirty = 1;
         app_toast(a, "Erro ao salvar no SD; vou tentar novamente");
     }
     int f = player_take_finished();
-    if (f == 1) { a->fail_streak = 0; app_next(a, 0); }
+    if (f == 2) {
+        int started = player_take_started();
+        int next = queue_next(&a->q, 0);
+        if (started >= 0 && started < a->lib.count) {
+            a->cur = started; a->session_dirty = 1;
+            if (next != started) {
+                for (int slot = 0; slot < a->q.count; slot++)
+                    if (queue_slot_id(&a->q, slot) == started) { queue_set_pos(&a->q, slot); break; }
+            }
+            library_record_play(&a->lib, started, 0); a->stats_dirty = 1;
+            if (a->sort_mode == SORT_RECENTES) library_sort_ids(&a->lib, a->view_ids, a->nview, a->sort_mode);
+        }
+    }
+    else if (f == 1) { a->fail_streak = 0; app_next(a, 0); }
     else if (f == -1) {                      /* arquivo ruim: pula, mas nao entra em loop se tudo falhar */
         if (++a->fail_streak < 5) app_next(a, 0); else { player_stop(); a->cur = -1; app_save_resume(a); app_toast(a, "Nao consegui tocar as faixas"); }
     }
     if (a->toast_frames > 0) a->toast_frames--;
 
-    /* scan em thread terminou: troca de biblioteca aqui (na UI), libera a antiga com 3 frames de folga */
+    /* Scan terminou: troca biblioteca e caches juntos, antes do proximo desenho. */
 #ifdef __3DS__
     if (a->scan_busy && s_scan_done) {
         join_scan();
         s_scan_done = 0;
-        a->scan_old = a->lib.tracks;
-        a->lib.tracks = s_fresh.tracks; a->lib.cap = s_fresh.cap; a->lib.count = s_fresh.count;
-        a->lib.last_parsed = s_fresh.last_parsed;
-        a->scan_frames = 0;
+        library_free(&a->lib);
+        a->lib = s_fresh;
+        memset(&s_fresh, 0, sizeof s_fresh);
         a->scan_busy = 0;
+        app_build_albums(a);
+        app_set_filter(a, a->query);
+        if (a->lib.skipped_paths) {
+            char b[64]; snprintf(b, sizeof b, "Scan: %d caminhos longos/profundos ignorados", a->lib.skipped_paths); app_toast(a, b);
+        } else if (!a->lib.count) app_toast(a, "Scan: nenhuma faixa encontrada");
+        else { char b[64]; snprintf(b, sizeof b, "Biblioteca: %d faixas", a->lib.count); app_toast(a, b); }
     }
 #endif
-    if (a->scan_old) {
-        if (++a->scan_frames >= 3) {
-            free(a->scan_old);
-            a->scan_old = NULL;
-            app_build_albums(a);
-            app_set_filter(a, a->query);     /* re-executa o filtro atual se houver */
-            if (a->lib.count == 0) app_toast(a, "Scan: nenhuma faixa encontrada");
-            else { char b[64]; snprintf(b, sizeof b, "Biblioteca: %d faixas", a->lib.count); app_toast(a, b); }
-            if (a->cur >= a->lib.count) a->cur = -1;
-        }
+
+    if (!a->scan_busy && player_state() != PS_STOPPED) {
+        int next = queue_peek_next(&a->q);
+        player_prepare_next(next >= 0 && next < a->lib.count ? &a->lib.tracks[next] : NULL, next);
     }
 
     /* retomada: guarda a posicao continuamente; auto-save periodico durante a reproducao */
     if (a->cur >= 0 && player_state() != PS_STOPPED) {
         a->resume_ms = player_pos_ms();
+        u_copy(a->resume_path, sizeof a->resume_path, a->lib.tracks[a->cur].path);
         if (++a->save_count >= SAVE_PERIOD) {
             a->save_count = 0;
-            app_save_resume(a);
+            /* O tick grava apenas a posicao: nao copia biblioteca nem fila. */
+            if (persistence_submit_parts(NULL, NULL, a->resume_path, a->resume_ms, 0, 0) != 0)
+                app_toast(a, "Nao consegui agendar o salvamento");
         }
     } else {
         a->save_count = 0;
     }
+    /* A sessao so muda com fila, posicao, shuffle ou repeat. Estatisticas sao
+       gravadas ao pausar/sair; o tick periodico acima permanece resume-only. */
+    if (a->session_dirty && !a->scan_busy && !persistence_busy()) {
+        if (persistence_submit_parts(&a->lib, &a->q, a->resume_path, a->resume_ms, 1, 0) == 0)
+            a->session_dirty = 0;
+    }
+
 }
 
 /* ---------------- ciclo de vida ---------------- */
@@ -496,12 +540,11 @@ void app_exit(App *a) {
     persistence_exit();
     if (persistence_take_error()) a->stats_dirty = 1;
     /* Fallback apenas ao sair, se o worker nao iniciou ou o SD falhou. */
-    if (a->stats_dirty && !a->scan_busy) {
+    if ((a->stats_dirty || a->session_dirty) && !a->scan_busy) {
         SaveState *state = save_state_capture(&a->lib, &a->q, a->resume_path, a->resume_ms, 1);
         if (state) { save_state_write(state, SESSION_PATH, RESUME_PATH, INDEX_PATH); save_state_free(state); }
     }
     player_stop();
-    if (a->scan_old) { free(a->scan_old); a->scan_old = NULL; }
     queue_free(&a->q);
     library_free(&a->lib);
     free(a->albums); a->albums = NULL; a->nalb = 0;

@@ -1,9 +1,11 @@
 # mp3ds - MP3 player para Nintendo 3DS (homebrew).  Requer devkitARM + libctru + citro2d/citro3d (grupo 3ds-dev).
 .SUFFIXES:
+ifneq ($(filter-out test clean,$(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)),)
 ifeq ($(strip $(DEVKITARM)),)
 $(error Defina DEVKITARM (ex.: export DEVKITPRO=/opt/devkitpro; export DEVKITARM=$$DEVKITPRO/devkitARM))
 endif
 include $(DEVKITARM)/3ds_rules
+endif
 
 TARGET      := mp3ds
 APP_TITLE   := mp3ds
@@ -20,7 +22,7 @@ LIBDIRS  := $(PORTLIBS) $(CTRULIB)
 ARCH     := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 INCLUDE  := $(addprefix -I,$(SRC_DIRS)) $(foreach d,$(LIBDIRS),-I$(d)/include)
 LIBPATHS := $(foreach d,$(LIBDIRS),-L$(d)/lib)
-CFLAGS   := -g -Wall -O2 -mword-relocations -ffunction-sections $(ARCH) $(INCLUDE) -D__3DS__
+CFLAGS   := -g -Wall -O2 -mword-relocations -ffunction-sections -MMD -MP $(ARCH) $(INCLUDE) -D__3DS__
 LDFLAGS  := -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(TARGET).map -Wl,--gc-sections
 LIBS     := -lcitro2d -lcitro3d -lctru -lm
 
@@ -54,5 +56,7 @@ clean:
 # Testes dos modulos portaveis (rodam no PC com gcc)
 test:
 	$(MAKE) -C tests
+
+-include $(OBJS:.o=.d)
 
 .PHONY: all cia clean test

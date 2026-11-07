@@ -11,3 +11,5 @@ tests/fixtures/
 
 tests/test_persistence
 tests/test_tap
+
+tests/test_player

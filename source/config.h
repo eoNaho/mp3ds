@@ -17,3 +17,8 @@
 #define COVER_MINI      16    /* lado da mini-capa usada como fundo "borrado" */
 #define COVER_LRU       6     /* capas mantidas na VRAM/RAM */
 #define MAX_PLAYLISTS   48
+
+/* Capacidades em bytes, incluindo NUL. */
+#define TRACK_PATH_MAX 1024
+#define TITLE_MAX 384
+#define META_MAX 256

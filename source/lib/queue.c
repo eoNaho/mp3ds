@@ -109,3 +109,8 @@ int queue_move_slot(Queue *q, int slot, int dir) {
     else if (q->pos == r) q->pos = slot;
     return r;
 }
+
+int queue_peek_next(const Queue *q) {
+    Queue copy = *q;
+    return queue_next(&copy, 0);
+}

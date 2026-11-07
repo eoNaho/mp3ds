@@ -1,3 +1,4 @@
+#include "config.h"
 #include "cover.h"
 #include "id3.h"
 #include "util.h"
@@ -5,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 
 #ifdef __3DS__
 #include <3ds.h>
@@ -76,10 +78,10 @@ static uint8_t *load_embedded(const char *track, int *w, int *h) {
 
 static uint8_t *load_folder_art(const char *track, int *w, int *h) {
     static const char *names[] = {"cover.jpg", "folder.jpg", "front.jpg", "Cover.jpg", "Folder.jpg", "cover.png", "folder.png", "front.png", "Cover.png", "Folder.png"};
-    char dir[256]; u_copy(dir, sizeof dir, track);
+    char dir[TRACK_PATH_MAX]; u_copy(dir, sizeof dir, track);
     char *s = strrchr(dir, '/'); if (s) *s = 0;
     for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
-        char p[320]; snprintf(p, sizeof p, "%s/%s", dir, names[i]);
+        char p[TRACK_PATH_MAX + 16]; snprintf(p, sizeof p, "%s/%s", dir, names[i]);
         FILE *f = fopen(p, "rb");
         if (!f) continue;
         fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
@@ -92,30 +94,53 @@ static uint8_t *load_folder_art(const char *track, int *w, int *h) {
 }
 
 int cover_ensure(const char *cache_dir, uint32_t key, const char *track) {
+    char paths[1][TRACK_PATH_MAX];
+    u_copy(paths[0], sizeof paths[0], track);
+    return cover_ensure_album(cache_dir, key, (const char (*)[TRACK_PATH_MAX])paths, 1);
+}
+
+int cover_ensure_album(const char *cache_dir, uint32_t key, const char (*paths)[TRACK_PATH_MAX], int count) {
     char cp[300]; cache_path(cp, sizeof cp, cache_dir, key);
     FILE *f = fopen(cp, "rb");
-    if (f) { CvrHeader h; int ok = fread(&h, sizeof h, 1, f) == 1; fclose(f); if (ok) return memcmp(h.magic, "CVR1", 4) == 0 ? 0 : 1; }
+    if (f) { CvrHeader h; int ok = fread(&h, sizeof h, 1, f) == 1; fclose(f); if (ok && !memcmp(h.magic, "CVR0", 4)) return 1;
+        if (ok && (!memcmp(h.magic, "CVR1", 4) || !memcmp(h.magic, "CVR2", 4)) && h.w == COVER_SIZE && h.h == COVER_SIZE) return 0; }
 
     int w = 0, h = 0;
     SPEEDUP_ON();
-    uint8_t *px = load_embedded(track, &w, &h);
-    if (!px) px = load_folder_art(track, &w, &h);
+    uint8_t *px = NULL;
+    for (int i = 0; i < count && !px; i++) {
+        px = load_embedded(paths[i], &w, &h);
+        if (!px) px = load_folder_art(paths[i], &w, &h);
+    }
 
     CvrHeader hd = { {'C', 'V', 'R', '0'}, 0, 0, 0 };
     CoverData *cd = NULL;
     if (px) {
         cd = malloc(sizeof *cd);
-        if (cd) { shrink(px, w, h, cd); memcpy(hd.magic, "CVR1", 4); hd.w = hd.h = COVER_SIZE; hd.accent = cd->accent; }
+        if (cd) { shrink(px, w, h, cd); memcpy(hd.magic, "CVR2", 4); hd.w = hd.h = COVER_SIZE; hd.accent = cd->accent; }
         stbi_image_free(px);
     }
     SPEEDUP_OFF();
     u_mkdir_p(cache_dir);
     f = fopen(cp, "wb");
     if (!f) { free(cd); return -1; }
-    fwrite(&hd, sizeof hd, 1, f);
-    if (cd && hd.magic[3] == '1') fwrite(cd->px, 1, sizeof cd->px, f);
-    fclose(f); free(cd);
-    return hd.magic[3] == '1' ? 0 : 1;
+    int ok = fwrite(&hd, sizeof hd, 1, f) == 1;
+    if (cd) {
+        /* RGB565 little endian: 32 KiB por capa em vez de 64 KiB. */
+        uint8_t row[COVER_SIZE * 2];
+        for (int y = 0; y < COVER_SIZE && ok; y++) {
+            for (int x = 0; x < COVER_SIZE; x++) {
+                const uint8_t *p = cd->px + (y * COVER_SIZE + x) * 4;
+                uint16_t rgb = ((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3);
+                row[2*x] = rgb; row[2*x+1] = rgb >> 8;
+            }
+            ok = fwrite(row, 1, sizeof row, f) == sizeof row;
+        }
+    }
+    if (fclose(f) != 0) ok = 0;
+    free(cd);
+    if (!ok) { remove(cp); return -1; }
+    return hd.magic[3] == '2' ? 0 : 1;
 }
 
 int cover_load(const char *cache_dir, uint32_t key, CoverData *o) {
@@ -125,8 +150,40 @@ int cover_load(const char *cache_dir, uint32_t key, CoverData *o) {
     CvrHeader h; int rc = -2;
     if (fread(&h, sizeof h, 1, f) == 1) {
         if (!memcmp(h.magic, "CVR0", 4)) rc = 1;
+        else if (!memcmp(h.magic, "CVR2", 4) && h.w == COVER_SIZE && h.h == COVER_SIZE) {
+            uint8_t row[COVER_SIZE * 2];
+            rc = 0; o->accent = h.accent;
+            for (int y = 0; y < COVER_SIZE; y++) {
+                if (fread(row, 1, sizeof row, f) != sizeof row) { rc = -2; break; }
+                for (int x = 0; x < COVER_SIZE; x++) {
+                    uint16_t rgb = row[2*x] | (row[2*x+1] << 8);
+                    uint8_t *p = o->px + (y * COVER_SIZE + x) * 4;
+                    unsigned r = rgb >> 11, g = (rgb >> 5) & 63, b = rgb & 31;
+                    p[0] = (r << 3) | (r >> 2); p[1] = (g << 2) | (g >> 4); p[2] = (b << 3) | (b >> 2); p[3] = 255;
+                }
+            }
+        }
         else if (!memcmp(h.magic, "CVR1", 4) && h.w == COVER_SIZE && h.h == COVER_SIZE && fread(o->px, 1, sizeof o->px, f) == sizeof o->px) { o->accent = h.accent; rc = 0; }
     }
     fclose(f);
     return rc;
+}
+
+int cover_clear_missing(const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    int cleared = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        size_t n = strlen(e->d_name);
+        if (n < 4 || strcmp(e->d_name + n - 4, ".cvr")) continue;
+        char path[TRACK_PATH_MAX + 32];
+        if (snprintf(path, sizeof path, "%s/%s", dir, e->d_name) >= (int)sizeof path) continue;
+        FILE *f = fopen(path, "rb"); if (!f) continue;
+        char magic[4]; int missing = fread(magic, 1, 4, f) == 4 && !memcmp(magic, "CVR0", 4);
+        fclose(f);
+        if (missing && remove(path) == 0) cleared++;
+    }
+    closedir(d);
+    return cleared;
 }

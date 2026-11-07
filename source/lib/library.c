@@ -13,7 +13,7 @@
 #include <time.h>
 
 #define IDX_MAGIC "M3DX"
-#define IDX_VERSION 2
+#define IDX_VERSION 3
 #define MAX_DEPTH 16
 
 typedef struct { char magic[4]; uint32_t version, rec_size, count; } IdxHeader;
@@ -24,7 +24,85 @@ typedef struct {
     int64_t mtime;
 } LegacyTrack;
 
-void library_free(Library *l) { free(l->tracks); memset(l, 0, sizeof *l); }
+typedef struct {
+    char path[256];
+    char title[96], artist[64], album[64];
+    uint32_t track, duration_ms, art_key, size;
+    int64_t mtime, added;
+    uint32_t plays;
+    int64_t last_played;
+} LegacyTrackV2;
+
+struct LibraryLookup { size_t cap; int *slots; };
+struct LibrarySearch { size_t *offsets; char *data; };
+
+static void free_caches(Library *l) {
+    if (l->lookup) { free(l->lookup->slots); free(l->lookup); l->lookup = NULL; }
+    if (l->search) { free(l->search->offsets); free(l->search->data); free(l->search); l->search = NULL; }
+}
+void library_free(Library *l) { free_caches(l); free(l->tracks); memset(l, 0, sizeof *l); }
+
+const char *track_album_artist(const Track *t) { return t->album_artist[0] ? t->album_artist : t->artist; }
+
+static const char *path_key(const Track *t, int kind) {
+    const char *p = t->path;
+    if (kind == 2) { const char *b = strrchr(p, '/'); if (b) p = b + 1; }
+    return p;
+}
+static uint32_t path_hash(const char *p, int fold) {
+    uint32_t h = 2166136261u;
+    for (; *p; p++) { unsigned char c = *p; if (fold && c >= 'A' && c <= 'Z') c += 32; h = (h ^ c) * 16777619u; }
+    return h;
+}
+static int path_equal(const char *a, const char *b, int fold) { return fold ? !strcasecmp(a, b) : !strcmp(a, b); }
+
+void library_prepare(Library *l) {
+    free_caches(l);
+    if (l->count <= 0) return;
+    LibraryLookup *h = calloc(1, sizeof *h);
+    if (h) {
+        h->cap = 16;
+        while (h->cap < (size_t)l->count * 2) h->cap *= 2;
+        h->slots = calloc(h->cap * 3, sizeof(int));
+        if (!h->slots) { free(h); h = NULL; }
+    }
+    if (h) for (int kind = 0; kind < 3; kind++) for (int i = 0; i < l->count; i++) {
+        const char *key = path_key(&l->tracks[i], kind);
+        size_t slot = path_hash(key, kind != 0) & (h->cap - 1);
+        int *table = h->slots + kind * h->cap;
+        while (table[slot]) {
+            int old = abs(table[slot]) - 1;
+            if (path_equal(path_key(&l->tracks[old], kind), key, kind != 0)) break;
+            slot = (slot + 1) & (h->cap - 1);
+        }
+        if (!table[slot]) table[slot] = i + 1;
+        else if (kind == 2) table[slot] = -abs(table[slot]); /* basename ambiguo */
+    }
+    l->lookup = h;
+    LibrarySearch *c = calloc(1, sizeof *c);
+    if (!c) return;
+    size_t bytes = 0;
+    for (int i = 0; i < l->count; i++) {
+        const Track *t = &l->tracks[i];
+        bytes += strlen(t->title) + strlen(t->artist) + strlen(t->album) + strlen(t->path) + 4;
+    }
+    c->offsets = malloc(sizeof(size_t) * (size_t)l->count * 4);
+    c->data = malloc(bytes);
+    if (!c->offsets || !c->data) { free(c->offsets); free(c->data); free(c); return; }
+    size_t pos = 0;
+    for (int i = 0; i < l->count; i++) {
+        const Track *t = &l->tracks[i];
+        char folder[TRACK_PATH_MAX]; u_copy(folder, sizeof folder, t->path);
+        char *slash = strrchr(folder, '/'); if (slash) *slash = 0; else folder[0] = 0;
+        const char *fields[] = {t->title, t->artist, t->album, folder};
+        for (int k = 0; k < 4; k++) {
+            c->offsets[i * 4 + k] = pos;
+            u_norm_ascii(c->data + pos, strlen(fields[k]) + 1, fields[k]);
+            pos += strlen(c->data + pos) + 1;
+        }
+    }
+    l->search = c;
+}
 
 static int push(Library *l, const Track *t) {
     if (l->count == l->cap) {
@@ -42,37 +120,43 @@ int library_load_index(Library *l, const char *p) {
     if (!f) return -1;
     IdxHeader h;
     if (fread(&h, sizeof h, 1, f) != 1 || memcmp(h.magic, IDX_MAGIC, 4) ||
-        (h.version != IDX_VERSION && h.version != 1) ||
-        (h.version == IDX_VERSION && h.rec_size != sizeof(Track)) ||
-        (h.version == 1 && h.rec_size != sizeof(LegacyTrack))) { fclose(f); return -2; }
-    library_free(l);
-    l->tracks = malloc(sizeof(Track) * (h.count ? h.count : 1));
-    if (!l->tracks) { fclose(f); return -3; }
-    l->cap = (int)(h.count ? h.count : 1);
-    if (h.version == IDX_VERSION) {
-        size_t got = fread(l->tracks, sizeof(Track), h.count, f);
-        if (got != h.count) { fclose(f); library_free(l); return -4; }
-        l->count = (int)got;
-    } else {
-        LegacyTrack old;
-        l->count = 0;
-        while (l->count < (int)h.count && fread(&old, sizeof old, 1, f) == 1) {
-            memset(&l->tracks[l->count], 0, sizeof(Track));
-            memcpy(l->tracks[l->count].path, old.path, sizeof old.path);
-            memcpy(l->tracks[l->count].title, old.title, sizeof old.title);
-            memcpy(l->tracks[l->count].artist, old.artist, sizeof old.artist);
-            memcpy(l->tracks[l->count].album, old.album, sizeof old.album);
-            l->tracks[l->count].track = old.track;
-            l->tracks[l->count].duration_ms = old.duration_ms;
-            l->tracks[l->count].art_key = old.art_key;
-            l->tracks[l->count].size = old.size;
-            l->tracks[l->count].mtime = old.mtime;
-            l->tracks[l->count].added = old.mtime; /* melhor aproximacao para indices antigos */
-            l->count++;
+        !((h.version == IDX_VERSION && h.rec_size == sizeof(Track)) ||
+          (h.version == 2 && h.rec_size == sizeof(LegacyTrackV2)) ||
+          (h.version == 1 && h.rec_size == sizeof(LegacyTrack))) ||
+        h.count > 100000) { fclose(f); return -2; }
+    Library fresh = {0};
+    fresh.tracks = calloc(h.count ? h.count : 1, sizeof(Track));
+    if (!fresh.tracks) { fclose(f); return -3; }
+    fresh.cap = h.count ? (int)h.count : 1;
+    fresh.needs_upgrade = h.version != IDX_VERSION;
+    for (uint32_t i = 0; i < h.count; i++) {
+        Track *t = &fresh.tracks[i];
+        if (h.version == IDX_VERSION) {
+            if (fread(t, sizeof *t, 1, f) != 1) goto bad;
+            t->path[sizeof t->path - 1] = t->title[sizeof t->title - 1] = 0;
+            t->artist[sizeof t->artist - 1] = t->album[sizeof t->album - 1] = t->album_artist[sizeof t->album_artist - 1] = 0;
+        } else {
+            LegacyTrackV2 old = {0};
+            if (h.version == 2) { if (fread(&old, sizeof old, 1, f) != 1) goto bad; }
+            else {
+                LegacyTrack v1;
+                if (fread(&v1, sizeof v1, 1, f) != 1) goto bad;
+                memcpy(&old, &v1, sizeof v1); old.added = old.mtime;
+            }
+            old.path[sizeof old.path - 1] = old.title[sizeof old.title - 1] = 0;
+            old.artist[sizeof old.artist - 1] = old.album[sizeof old.album - 1] = 0;
+            u_copy(t->path, sizeof t->path, old.path); u_copy(t->title, sizeof t->title, old.title);
+            u_copy(t->artist, sizeof t->artist, old.artist); u_copy(t->album, sizeof t->album, old.album);
+            t->track = old.track; t->duration_ms = old.duration_ms; t->art_key = old.art_key;
+            t->size = old.size; t->mtime = old.mtime; t->added = old.added;
+            t->plays = old.plays; t->last_played = old.last_played;
         }
+        fresh.count++;
     }
-    fclose(f);
+    fclose(f); library_free(l); *l = fresh; library_prepare(l);
     return 0;
+bad:
+    fclose(f); library_free(&fresh); return -4;
 }
 
 int library_save_index(const Library *l, const char *p) {
@@ -93,8 +177,9 @@ static int cmp_path(const void *a, const void *b) { return strcmp(((const Track 
 
 static int cmp_sort(const void *pa, const void *pb) {
     const Track *a = pa, *b = pb; int r;
-    if ((r = strcasecmp(a->artist, b->artist))) return r;
+    if ((r = strcasecmp(track_album_artist(a), track_album_artist(b)))) return r;
     if ((r = strcasecmp(a->album, b->album))) return r;
+    if (a->disc != b->disc) return a->disc < b->disc ? -1 : 1;
     if (a->track != b->track) return a->track < b->track ? -1 : 1;
     return strcasecmp(a->title, b->title);
 }
@@ -109,12 +194,13 @@ static int cmp_id(const void *pa, const void *pb) {
     switch (s_sort_mode) {
         case SORT_ALBUM:
             if ((r = strcasecmp(a->album, b->album))) break;
-            if ((r = strcasecmp(a->artist, b->artist))) break;
+            if ((r = strcasecmp(track_album_artist(a), track_album_artist(b)))) break;
+            if (a->disc != b->disc) return a->disc < b->disc ? -1 : 1;
             if (a->track != b->track) return a->track < b->track ? -1 : 1;
             r = strcasecmp(a->title, b->title); break;
         case SORT_TITULO:
             if ((r = strcasecmp(a->title, b->title))) break;
-            r = strcasecmp(a->artist, b->artist); break;
+            r = strcasecmp(track_album_artist(a), track_album_artist(b)); break;
         case SORT_ADICAO:
             if (a->added != b->added) return a->added > b->added ? -1 : 1;
             r = strcasecmp(a->title, b->title); break;
@@ -129,7 +215,7 @@ static int cmp_id(const void *pa, const void *pb) {
     return strcmp(a->path, b->path);
 }
 
-void library_sort(Library *l) { if (l->count > 1) qsort(l->tracks, l->count, sizeof(Track), cmp_sort); }
+void library_sort(Library *l) { if (l->count > 1) qsort(l->tracks, l->count, sizeof(Track), cmp_sort); library_prepare(l); }
 
 void library_sort_ids(const Library *l, int *ids, int count, SortMode mode) {
     s_sort_lib = l; s_sort_mode = mode;
@@ -144,6 +230,24 @@ void library_record_play(Library *l, int id, int64_t when) {
 }
 
 int library_find_path(const Library *l, const char *path) {
+    if (l->lookup) {
+        const LibraryLookup *h = l->lookup;
+        for (int kind = 0; kind < 3; kind++) {
+            const char *key = path;
+            if (kind == 2) { key = strrchr(path, '/'); if (!key || !key[1]) break; key++; }
+            const int *table = h->slots + kind * h->cap;
+            size_t slot = path_hash(key, kind != 0) & (h->cap - 1);
+            while (table[slot]) {
+                int id = abs(table[slot]) - 1;
+                if (path_equal(path_key(&l->tracks[id], kind), key, kind != 0)) {
+                    if (table[slot] > 0) return id;
+                    break;
+                }
+                slot = (slot + 1) & (h->cap - 1);
+            }
+        }
+        return -1;
+    }
     for (int i = 0; i < l->count; i++) if (!strcmp(l->tracks[i].path, path)) return i;
     /* Playlists podem ter vindo de outro sistema de arquivos e diferir apenas
        em maiusculas/minusculas (o SD do 3DS nao diferencia esses nomes). */
@@ -183,20 +287,25 @@ int library_search_filtered(const Library *l, const char *query, SearchField fie
     for (int i = 0; i < l->count && n < max; i++) {
         const Track *t = &l->tracks[i];
         if ((plays == SEARCH_UNPLAYED && t->plays) || (plays == SEARCH_PLAYED && !t->plays)) continue;
-        char title[128] = "", artist[128] = "", album[128] = "", folder[256] = "";
-        if (field == SEARCH_ALL || field == SEARCH_TITLE) u_norm_ascii(title, sizeof title, t->title);
-        if (field == SEARCH_ALL || field == SEARCH_ARTIST) u_norm_ascii(artist, sizeof artist, t->artist);
-        if (field == SEARCH_ALL || field == SEARCH_ALBUM) u_norm_ascii(album, sizeof album, t->album);
-        if (field == SEARCH_FOLDER) {
-            char path[256]; u_copy(path, sizeof path, t->path);
-            char *slash = strrchr(path, '/');
-            if (slash) *slash = 0; else path[0] = 0;
+        char title[TITLE_MAX] = "", artist[META_MAX] = "", album[META_MAX] = "", folder[TRACK_PATH_MAX] = "";
+        const char *fields[4] = {title, artist, album, folder};
+        if (l->search) {
+            for (int k = 0; k < 4; k++) fields[k] = l->search->data + l->search->offsets[i * 4 + k];
+        } else {
+            u_norm_ascii(title, sizeof title, t->title); u_norm_ascii(artist, sizeof artist, t->artist);
+            u_norm_ascii(album, sizeof album, t->album);
+            char path[TRACK_PATH_MAX]; u_copy(path, sizeof path, t->path);
+            char *slash = strrchr(path, '/'); if (slash) *slash = 0; else path[0] = 0;
             u_norm_ascii(folder, sizeof folder, path);
         }
         int match = 1;
         for (int k = 0; k < nt; k++) {
-            if (!strstr(title, terms[k]) && !strstr(artist, terms[k]) &&
-                !strstr(album, terms[k]) && !strstr(folder, terms[k])) { match = 0; break; }
+            int hit = 0;
+            for (int f = 0; f < 4; f++) {
+                if ((field == SEARCH_ALL && f < 3) || (int)field == f + 1)
+                    if (strstr(fields[f], terms[k])) hit = 1;
+            }
+            if (!hit) { match = 0; break; }
         }
         if (match) out[n++] = i;
     }
@@ -214,10 +323,10 @@ int library_build_albums(const Library *l, AlbumGroup *out, int max) {
     memset(out, 0, sizeof(AlbumGroup) * (size_t)max);
     for (int i = 0; i < l->count; i++) {
         const Track *t = &l->tracks[i];
-        int same = n > 0 && !strcasecmp(out[n - 1].artist, t->artist) && !strcasecmp(out[n - 1].album, t->album);
+        int same = n > 0 && !strcasecmp(out[n - 1].artist, track_album_artist(t)) && !strcasecmp(out[n - 1].album, t->album);
         if (same) { out[n - 1].count++; continue; }
         if (n >= max) break;
-        u_copy(out[n].artist, sizeof out[n].artist, t->artist);
+        u_copy(out[n].artist, sizeof out[n].artist, track_album_artist(t));
         u_copy(out[n].album, sizeof out[n].album, t->album);
         out[n].art_key = t->art_key;
         out[n].first = i; out[n].count = 1;
@@ -248,10 +357,12 @@ static int build_track(const char *path, const struct stat *st, Track *t) {
         u_copy(t->artist, sizeof t->artist, fi.artist[0] ? fi.artist : "Desconhecido");
         u_copy(t->album, sizeof t->album, fi.album);
         t->track = (uint32_t)fi.track;
+        t->disc = fi.disc > 0 ? (uint32_t)fi.disc : 1;
+        u_copy(t->album_artist, sizeof t->album_artist, fi.album_artist);
         t->duration_ms = fi.sample_rate ? (uint32_t)(fi.samples * 1000 / fi.sample_rate) : 0;
         t->size = (uint32_t)st->st_size; t->mtime = (int64_t)st->st_mtime; t->added = (int64_t)time(NULL);
-        if (fi.album[0]) { char k[200]; snprintf(k, sizeof k, "%s\x1f%s", t->album, t->artist); t->art_key = u_fnv1a(k); }
-        else { char d[256]; dir_of(path, d, sizeof d); t->art_key = u_fnv1a(d); }
+        if (fi.album[0]) { char k[2 * META_MAX + 2]; snprintf(k, sizeof k, "%s\x1f%s", t->album, track_album_artist(t)); t->art_key = u_fnv1a(k); }
+        else { char d[TRACK_PATH_MAX]; dir_of(path, d, sizeof d); t->art_key = u_fnv1a(d); }
         return 0;
     }
     Id3Info id; Mp3Info mi;
@@ -267,11 +378,14 @@ static int build_track(const char *path, const struct stat *st, Track *t) {
     }
     u_copy(t->artist, sizeof t->artist, id.artist[0] ? id.artist : "Desconhecido");
     u_copy(t->album, sizeof t->album, id.album[0] ? id.album : "");
+    u_copy(t->album_artist, sizeof t->album_artist, id.album_artist);
+    t->disc = id.disc > 0 ? (uint32_t)id.disc : 1;
+    t->mp3 = mi;
     t->track = (uint32_t)id.track; t->duration_ms = mi.duration_ms;
     t->size = (uint32_t)st->st_size; t->mtime = (int64_t)st->st_mtime;
     t->added = (int64_t)time(NULL);
-    if (id.album[0]) { char k[200]; snprintf(k, sizeof k, "%s\x1f%s", t->album, t->artist); t->art_key = u_fnv1a(k); }
-    else { char d[256]; dir_of(path, d, sizeof d); t->art_key = u_fnv1a(d); }
+    if (id.album[0]) { char k[2 * META_MAX + 2]; snprintf(k, sizeof k, "%s\x1f%s", t->album, track_album_artist(t)); t->art_key = u_fnv1a(k); }
+    else { char d[TRACK_PATH_MAX]; dir_of(path, d, sizeof d); t->art_key = u_fnv1a(d); }
     return 0;
 }
 
@@ -282,14 +396,18 @@ typedef struct {
 } Scan;
 
 static void walk(Scan *s, const char *dir, int depth) {
-    if (depth > MAX_DEPTH || s->abort) return;
+    if (s->abort) return;
+    if (depth > MAX_DEPTH) { s->out->skipped_paths++; return; }
     DIR *d = opendir(dir);
     if (!d) return;
     struct dirent *e;
     while (!s->abort && (e = readdir(d))) {
         if (e->d_name[0] == '.') continue;
-        char p[256];
-        if (snprintf(p, sizeof p, "%s/%s", dir, e->d_name) >= (int)sizeof p) continue;
+        char p[TRACK_PATH_MAX];
+        if (snprintf(p, sizeof p, "%s/%s", dir, e->d_name) >= (int)sizeof p) {
+            s->out->skipped_paths++; /* inclui subpastas que nao podem ser percorridas */
+            continue;
+        }
         struct stat st;
         if (stat(p, &st) != 0) continue;
         if (S_ISDIR(st.st_mode)) { walk(s, p, depth + 1); continue; }
@@ -297,7 +415,7 @@ static void walk(Scan *s, const char *dir, int depth) {
 
         u_copy(s->key.path, sizeof s->key.path, p);
         const Track *o = s->nold ? bsearch(&s->key, s->old, s->nold, sizeof(Track), cmp_path) : NULL;
-        if (o && o->size == (uint32_t)st.st_size && o->mtime == (int64_t)st.st_mtime) s->tmp = *o;
+        if (o && !s->out->needs_upgrade && o->mp3.sample_rate && o->size == (uint32_t)st.st_size && o->mtime == (int64_t)st.st_mtime) s->tmp = *o;
         else {
             if (build_track(p, &st, &s->tmp) != 0) continue;
             /* Tags ou tamanho mudaram, mas o historico pertence ao caminho da faixa. */
@@ -308,7 +426,7 @@ static void walk(Scan *s, const char *dir, int depth) {
             }
             s->parsed++;
         }
-        push(s->out, &s->tmp);
+        if (push(s->out, &s->tmp) != 0) { s->abort = 1; break; }
         if (s->cb && s->cb(s->out->count, p, s->ud)) s->abort = 1;
     }
     closedir(d);
@@ -320,10 +438,12 @@ int library_scan(Library *l, const char *root, ScanProgress cb, void *ud) {
     if (nold > 1) qsort(old, nold, sizeof(Track), cmp_path);
     Scan s;                       /* uma unica instancia (~1 KB); a recursao so recebe o ponteiro */
     memset(&s, 0, sizeof s);
+    fresh.needs_upgrade = l->needs_upgrade;
     s.out = &fresh; s.old = old; s.nold = nold; s.cb = cb; s.ud = ud;
     walk(&s, root, 0);
-    free(l->tracks);
+    library_free(l);
     *l = fresh;
+    l->needs_upgrade = 0;
     l->last_parsed = s.parsed;
     library_sort(l);
     return s.abort ? 1 : 0;

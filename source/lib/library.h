@@ -1,9 +1,13 @@
 #pragma once
 #include <stdint.h>
+#include "config.h"
+#include "mp3info.h"
 
 typedef struct {
-    char     path[256];
-    char     title[96], artist[64], album[64];
+    char     path[TRACK_PATH_MAX];
+    char     title[TITLE_MAX], artist[META_MAX], album[META_MAX], album_artist[META_MAX];
+    uint32_t disc;
+    Mp3Info mp3;
     uint32_t track, duration_ms, art_key, size;
     int64_t  mtime;
     int64_t  added;        /* quando entrou na biblioteca (epoch; 0 = nao sabe) */
@@ -13,7 +17,7 @@ typedef struct {
 
 /* ordem da lista de Musicas (a biblioteca em si fica artista/album/faixa) */
 typedef enum {
-    SORT_ARTISTA = 0,      /* ordem nativa: artista, album, faixa, titulo */
+    SORT_ARTISTA = 0,      /* ordem nativa: album artist, album, disco, faixa, titulo */
     SORT_ALBUM,            /* album (independente de artista), faixa */
     SORT_TITULO,           /* titulo */
     SORT_ADICAO,           /* adicionadas por ultimo primeiro */
@@ -22,14 +26,19 @@ typedef enum {
 
 /* agrupamento de faixas consecutivas (biblioteca deve estar ordenada) */
 typedef struct {
-    char     artist[64], album[64];
+    char     artist[META_MAX], album[META_MAX];
     uint32_t art_key;
     int      first, count;   /* faixas de [first, first+count) na biblioteca */
 } AlbumGroup;
 
+typedef struct LibraryLookup LibraryLookup;
+typedef struct LibrarySearch LibrarySearch;
 typedef struct {
     Track *tracks;
     int count, cap;
+    int skipped_paths, needs_upgrade;
+    LibraryLookup *lookup;
+    LibrarySearch *search;
     int last_parsed;   /* quantas faixas o ultimo scan precisou ler de novo (as outras vieram do indice) */
 } Library;
 
@@ -41,7 +50,7 @@ int  library_load_index(Library *l, const char *idx_path);       /* 0 = ok */
 int  library_save_index(const Library *l, const char *idx_path); /* 0 = ok */
 /* Varre root recursivamente (.mp3; FLAC experimental pode ser ativado em config.h). */
 int  library_scan(Library *l, const char *root, ScanProgress cb, void *ud);
-void library_sort(Library *l);                                    /* artista, album, faixa, titulo */
+void library_sort(Library *l);                                    /* album artist, album, disco, faixa, titulo */
 int  library_find_path(const Library *l, const char *path);       /* indice ou -1 */
 typedef enum { SEARCH_ALL = 0, SEARCH_TITLE, SEARCH_ARTIST, SEARCH_ALBUM, SEARCH_FOLDER, SEARCH_FIELD_N } SearchField;
 typedef enum { SEARCH_ANY_PLAY = 0, SEARCH_UNPLAYED, SEARCH_PLAYED, SEARCH_PLAY_N } SearchPlays;
@@ -51,9 +60,13 @@ int library_search_filtered(const Library *l, const char *query, SearchField fie
 /* Busca palavras em titulo/artista/album, ignorando caixa e acentos; query vazia retorna 0.
    Preenche out (max) com indices de faixa em ordem da biblioteca; retorna a quantidade. */
 int  library_search(const Library *l, const char *query, int *out, int max);
-/* Agrupa as faixas ordenadas em albuns (artista+album). out deve ter espaco para l->count. */
+/* Agrupa as faixas ordenadas em albuns (album artist+album). out deve ter espaco para l->count. */
 int  library_build_albums(const Library *l, AlbumGroup *out, int max);
 /* Ordena uma lista de IDs sem alterar a ordem fisica da biblioteca. */
 void library_sort_ids(const Library *l, int *ids, int count, SortMode mode);
 /* Registra uma reproducao; o chamador decide quando persistir o indice. */
 void library_record_play(Library *l, int id, int64_t when);
+
+/* Reconstruir apos alterar caminhos/metadados/ordem das faixas. */
+void library_prepare(Library *l);
+const char *track_album_artist(const Track *t);

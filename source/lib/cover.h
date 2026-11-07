@@ -13,3 +13,7 @@ typedef struct {
 int cover_ensure(const char *cache_dir, uint32_t key, const char *track_path);
 /* Le o cache pronto. 0 = ok, 1 = sem capa, <0 = erro. */
 int cover_load(const char *cache_dir, uint32_t key, CoverData *out);
+
+/* Tenta todas as faixas do album antes de criar CVR0. */
+int cover_ensure_album(const char *cache_dir, uint32_t key, const char (*paths)[TRACK_PATH_MAX], int count);
+int cover_clear_missing(const char *cache_dir);

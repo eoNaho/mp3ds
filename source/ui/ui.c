@@ -351,7 +351,7 @@ static void draw_top(App *a, const Viz *v) {
     C2D_TargetClear(s_top, BG);
     C2D_SceneBegin(s_top);
     const Track *tr = (a->cur >= 0 && a->cur < a->lib.count) ? &a->lib.tracks[a->cur] : NULL;
-    const CoverTex *cv = tr ? covers_get(tr->art_key, tr->path) : NULL;
+    const CoverTex *cv = tr ? covers_get(&a->lib, a->cur) : NULL;
     u32 accent = ACCENT0;
 
     if (cv) {   /* fundo "borrado": mini-capa 16x16 esticada com filtro linear + escurecimento */
@@ -411,7 +411,7 @@ static void draw_bottom(App *a) {
     C2D_SceneBegin(s_bot);
     int t = a->tab;
     const Track *cur = (a->cur >= 0 && a->cur < a->lib.count) ? &a->lib.tracks[a->cur] : NULL;
-    const CoverTex *cv = cur ? covers_get(cur->art_key, cur->path) : NULL;
+    const CoverTex *cv = cur ? covers_get(&a->lib, a->cur) : NULL;
     u32 accent = cv ? cv->accent : ACCENT0;
 
     if (s_search_open) {
@@ -469,7 +469,8 @@ static void draw_bottom(App *a) {
         if (t == TAB_SONGS) {
             const Track *tr = &a->lib.tracks[app_row_to_id(a, i)];
             u_utf8_trunc(b, sizeof b, tr->title, 30);
-            snprintf(c, sizeof c, "%s  [%u]", tr->artist, (unsigned)tr->plays);
+            char artist[80]; u_utf8_trunc(artist, sizeof artist, tr->artist, 22);
+            snprintf(c, sizeof c, "%s  [%u]", artist, (unsigned)tr->plays);
             int playing = (app_row_to_id(a, i) == a->cur);
             if (playing) rect(0, y, 3, ROW_H - 2, accent);
             text(b, 10, y + 1, 0.45f, playing ? accent : TXT);

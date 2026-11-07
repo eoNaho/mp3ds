@@ -1,9 +1,12 @@
 /* Reproducao via ndsp. A thread de audio decodifica e mantem buffers na fila do DSP. */
 #include <3ds.h>
 #include <string.h>
+#include <stdatomic.h>
 #include "player.h"
 #include "decoder.h"
 #include "commands.h"
+#include "stream.h"
+#include "util.h"
 
 #define CH          0
 #define NBUF        4
@@ -21,6 +24,15 @@ static LightLock   s_lock;
 static Thread      s_th;
 static volatile bool s_run;
 static PlaybackCommand s_pend;
+static Track s_play_track, s_next_track;
+static int s_next_id = -1, s_started_id = -1;
+static unsigned s_next_version;
+static uint32_t s_epoch;
+static _Atomic uint32_t s_visible_epoch, buffer_epoch[NBUF];
+static Track s_visible_track, s_staged_track;
+static int s_staged_id = -1;
+static uint32_t s_staged_epoch, s_staged_duration;
+static int playing_buf(u32 *pos);
 
 static volatile PlayerState s_state = PS_STOPPED;
 static volatile bool     s_paused, s_applied_pause;
@@ -53,68 +65,91 @@ static void reset_queue(void) {
 
 static void audio_thread(void *arg) {
     (void)arg;
-    Decoder *dec = NULL;
+    AudioStream stream = {0};
     bool eof = false;
     uint32_t submitted = 0;
-
+    unsigned next_version = 0;
     while (s_run) {
-        int cmd; char path[256] = ""; uint32_t seek;
+        int cmd; uint32_t seek; Track play;
         LightLock_Lock(&s_lock);
         cmd = s_pend.cmd; seek = s_pend.seek;
-        if (cmd == CMD_PLAY) { memcpy(path, s_pend.path, sizeof path); }
+        if (cmd == CMD_PLAY) play = s_play_track;
         s_pend.cmd = CMD_NONE;
         LightLock_Unlock(&s_lock);
-
         if (cmd == CMD_PLAY || cmd == CMD_STOP) {
             reset_queue();
-            if (dec) { decoder_close(dec); dec = NULL; }
-            eof = false; submitted = 0; s_base_ms = 0; s_last_frames = 0; s_dur = 0;
-            if (cmd == CMD_PLAY) {
-                dec = decoder_open(path);
-                if (dec) {
-                    s_hz = (uint32_t)decoder_sample_rate(dec);
-                    s_dur = decoder_duration_ms(dec);
-                    if (seek) {                              /* retomada: abre e salta no mesmo comando */
-                        decoder_seek_ms(dec, seek);
-                        s_base_ms = seek;
-                    }
-                    ndspChnSetRate(CH, (float)s_hz);
-                    s_state = PS_PLAYING;
-                } else { s_state = PS_STOPPED; s_finished = -1; }
-            } else s_state = PS_STOPPED;
-        } else if (cmd == CMD_SEEK && dec) {
-            reset_queue();
-            decoder_seek_ms(dec, seek);
+            eof = false; submitted = 0; s_base_ms = 0; s_dur = 0; s_epoch++; s_visible_epoch = s_epoch;
+            if (cmd == CMD_PLAY && stream_start(&stream, &play, seek) == 0) {
+                s_hz = decoder_sample_rate(stream.current); s_dur = decoder_duration_ms(stream.current);
+                s_base_ms = seek;
+                LightLock_Lock(&s_lock); s_visible_track = play; s_staged_id = -1; LightLock_Unlock(&s_lock);
+                ndspChnSetRate(CH, (float)s_hz);
+                s_state = s_paused ? PS_PAUSED : PS_PLAYING;
+            } else {
+                stream_close(&stream); s_state = PS_STOPPED;
+                if (cmd == CMD_PLAY) { LightLock_Lock(&s_lock); s_finished = -1; LightLock_Unlock(&s_lock); }
+            }
+            next_version = 0; /* revalida a proxima depois de PLAY/STOP */
+        } else if (cmd == CMD_SEEK && stream.current) {
+            reset_queue(); decoder_seek_ms(stream.current, seek);
             eof = false; submitted = 0; s_base_ms = seek;
         }
-
         if (s_paused != s_applied_pause) {
-            ndspChnSetPaused(CH, s_paused);
-            s_applied_pause = s_paused;
-            if (dec) s_state = s_paused ? PS_PAUSED : PS_PLAYING;
+            ndspChnSetPaused(CH, s_paused); s_applied_pause = s_paused;
+            if (stream.current) s_state = s_paused ? PS_PAUSED : PS_PLAYING;
         }
-
-        if (dec && !eof) {
+        /* Atualiza o prefetch antes de consumir uma proxima que foi editada. */
+        Track next; int id; unsigned version;
+        LightLock_Lock(&s_lock);
+        version = s_next_version; id = s_next_id;
+        if (version != next_version && id >= 0) next = s_next_track;
+        LightLock_Unlock(&s_lock);
+        if (version != next_version) {
+            stream_prepare(&stream, id >= 0 ? &next : NULL, id);
+            next_version = version;
+            if (stream.current && stream.next && eof &&
+                decoder_sample_rate(stream.current) == decoder_sample_rate(stream.next)) eof = false;
+        }
+        if (stream.current && !eof) {
             for (int i = 0; i < NBUF; i++) {
                 if (wb[i].status != NDSP_WBUF_DONE) continue;
-                int n = decoder_read(dec, pcm[i], BUF_FRAMES);
+                int started = -1;
+                int n = stream_read(&stream, pcm[i], BUF_FRAMES, &started);
+                LightLock_Lock(&s_lock);
+                int superseded = s_pend.cmd != CMD_NONE;
+                if (!superseded && started >= 0 && version != s_next_version) {
+                    /* A fila mudou enquanto decodificava: descarta a transicao antiga. */
+                    s_play_track = s_visible_track;
+                    playback_command_post(&s_pend, CMD_PLAY, s_play_track.path, player_pos_ms());
+                    superseded = 1;
+                }
+                if (!superseded && started >= 0) {
+                    submitted = 0; s_epoch++;
+                    s_staged_id = started; s_staged_epoch = s_epoch;
+                    s_staged_track = stream.next_track;
+                    s_staged_duration = decoder_duration_ms(stream.current);
+                    if (s_next_id == started) { s_next_id = -1; s_next_version++; }
+                }
+                LightLock_Unlock(&s_lock);
+                if (superseded) break;
                 if (n <= 0) { eof = true; break; }
-                wb[i].data_vaddr = pcm[i];
-                wb[i].nsamples = (u32)n;
-                wb[i].looping = false;
-                start_frames[i] = submitted; submitted += (uint32_t)n;
+                wb[i].data_vaddr = pcm[i]; wb[i].nsamples = (u32)n; wb[i].looping = false;
+                start_frames[i] = submitted; buffer_epoch[i] = s_epoch; submitted += (uint32_t)n;
                 DSP_FlushDataCache(pcm[i], (u32)n * 4);
                 ndspChnWaveBufAdd(CH, &wb[i]);
             }
         }
-        if (dec && eof) {                       /* acabou de decodificar: espera o DSP esvaziar a fila */
+        if (stream.current && eof) {
             bool idle = true;
             for (int i = 0; i < NBUF; i++) if (wb[i].status != NDSP_WBUF_DONE) idle = false;
-            if (idle) { decoder_close(dec); dec = NULL; s_state = PS_STOPPED; s_finished = 1; }
+            LightLock_Lock(&s_lock);
+            if (idle && s_staged_id < 0 && s_finished != 2) { s_state = PS_STOPPED; s_finished = 1; }
+            LightLock_Unlock(&s_lock);
+            if (idle && s_state == PS_STOPPED) { decoder_close(stream.current); stream.current = NULL; }
         }
-        LightEvent_WaitTimeout(&s_ev, 30 * 1000 * 1000);   /* acorda no callback do ndsp ou em 30 ms */
+        LightEvent_WaitTimeout(&s_ev, 30 * 1000 * 1000);
     }
-    if (dec) decoder_close(dec);
+    stream_close(&stream);
 }
 
 int player_init(void) {
@@ -160,20 +195,77 @@ void player_exit(void) {
 
 static void post(int cmd, const char *path, uint32_t seek) {
     LightLock_Lock(&s_lock);
+    if (cmd == CMD_SEEK && s_staged_id >= 0) {
+        cmd = CMD_PLAY; s_play_track = s_visible_track; path = s_play_track.path;
+    }
+    if (cmd == CMD_PLAY || cmd == CMD_STOP) {
+        s_started_id = -1; s_staged_id = -1; s_finished = 0; s_next_id = -1; s_next_version++;
+    }
     playback_command_post(&s_pend, cmd, path, seek);
     LightLock_Unlock(&s_lock);
     LightEvent_Signal(&s_ev);
 }
 
 void player_play(const char *path) { player_play_seek(path, 0); }
-void player_play_seek(const char *path, uint32_t start_ms) { s_paused = false; s_finished = 0; s_state = PS_PLAYING; post(CMD_PLAY, path, start_ms); }
+void player_play_seek(const char *path, uint32_t start_ms) {
+    Track t = {0}; u_copy(t.path, sizeof t.path, path); player_play_track(&t, start_ms);
+}
+void player_play_track(const Track *track, uint32_t start_ms) {
+    LightLock_Lock(&s_lock);
+    s_play_track = *track; s_paused = false; s_finished = 0; s_started_id = s_staged_id = -1;
+    s_next_id = -1; s_next_version++;
+    playback_command_post(&s_pend, CMD_PLAY, track->path, start_ms);
+    s_state = PS_PLAYING;
+    LightLock_Unlock(&s_lock); LightEvent_Signal(&s_ev);
+}
+void player_prepare_next(const Track *track, int id) {
+    LightLock_Lock(&s_lock);
+    if (s_staged_id >= 0) {
+        if (id == s_staged_id) { LightLock_Unlock(&s_lock); return; }
+        /* Ainda toca a cauda anterior; uma edicao pode substituir a faixa preparada. */
+        s_play_track = s_visible_track;
+        playback_command_post(&s_pend, CMD_PLAY, s_play_track.path, player_pos_ms());
+        s_staged_id = -1;
+    }
+    if (s_next_id != id || (track && strcmp(track->path, s_next_track.path))) {
+        s_next_id = id;
+        if (track) s_next_track = *track;
+        s_next_version++;
+        LightEvent_Signal(&s_ev);
+    }
+    LightLock_Unlock(&s_lock);
+}
+int player_take_started(void) {
+    LightLock_Lock(&s_lock); int id = s_started_id; s_started_id = -1; LightLock_Unlock(&s_lock); return id;
+}
 void player_stop(void)             { s_paused = false; post(CMD_STOP, NULL, 0); }
 void player_pause(int p)           { if (s_state != PS_STOPPED) { s_paused = p ? true : false; LightEvent_Signal(&s_ev); } }
 void player_seek(uint32_t ms)      { post(CMD_SEEK, NULL, ms); }
 PlayerState player_state(void)     { return s_state; }
 uint32_t player_duration_ms(void)  { return s_dur; }
 
-int player_take_finished(void) { int f = s_finished; s_finished = 0; return f; }
+int player_take_finished(void) {
+    LightLock_Lock(&s_lock);
+    if (s_staged_id >= 0) {
+        u32 pos; int i = playing_buf(&pos);
+        int audible = i >= 0 && buffer_epoch[i] == s_staged_epoch;
+        if (i < 0) { /* faixa muito curta: a UI pode ter perdido seu primeiro buffer */
+            int idle = 1, played = 0;
+            for (int k = 0; k < NBUF; k++) {
+                if (wb[k].status != NDSP_WBUF_DONE) idle = 0;
+                if (buffer_epoch[k] == s_staged_epoch && wb[k].nsamples) played = 1;
+            }
+            audible = idle && played;
+        }
+        if (audible) {
+            s_visible_epoch = s_staged_epoch; s_visible_track = s_staged_track;
+            s_dur = s_staged_duration; s_base_ms = 0; s_last_frames = 0;
+            s_started_id = s_staged_id; s_staged_id = -1; s_finished = 2;
+        }
+    }
+    int f = s_finished; s_finished = 0;
+    LightLock_Unlock(&s_lock); return f;
+}
 
 /* acha o buffer que o DSP esta tocando e a posicao (em amostras) dentro dele */
 static int playing_buf(u32 *pos) {
@@ -191,6 +283,7 @@ static int playing_buf(u32 *pos) {
 uint32_t player_pos_ms(void) {
     if (s_state == PS_STOPPED) return 0;
     u32 sp; int i = playing_buf(&sp);
+    if (i >= 0 && buffer_epoch[i] != s_visible_epoch) return 0; /* cauda da faixa anterior ainda no DSP */
     if (i >= 0) s_last_frames = start_frames[i] + sp;
     return s_base_ms + (uint32_t)((uint64_t)s_last_frames * 1000 / (s_hz ? s_hz : 44100));
 }

@@ -1,5 +1,6 @@
 #pragma once
-#define PL_PATH_MAX 256
+#include "config.h"
+#define PL_PATH_MAX TRACK_PATH_MAX
 
 typedef struct { char name[64]; char path[PL_PATH_MAX]; } PlaylistInfo;
 

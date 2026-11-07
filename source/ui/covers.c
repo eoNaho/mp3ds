@@ -12,7 +12,7 @@ static Thread s_th;
 static LightEvent s_wake;
 static LightLock s_lock;
 static volatile bool s_run;
-static struct { int has; uint32_t key; char path[256]; } s_req;   /* pedido pendente (so 1: o mais recente vence) */
+static struct { int has; uint32_t key; char (*paths)[TRACK_PATH_MAX]; int count; } s_req;   /* pedido pendente (so 1: o mais recente vence) */
 static uint32_t s_inflight;
 static struct { int has; uint32_t key; int rc; CoverData *data; } s_done;
 
@@ -21,13 +21,14 @@ static void worker(void *arg) {
     while (s_run) {
         LightEvent_Wait(&s_wake);
         if (!s_run) break;
-        uint32_t key; char path[256];
+        uint32_t key; char (*paths)[TRACK_PATH_MAX]; int count;
         LightLock_Lock(&s_lock);
         if (!s_req.has) { LightLock_Unlock(&s_lock); continue; }
-        key = s_req.key; memcpy(path, s_req.path, sizeof path); s_req.has = 0; s_inflight = key;
+        key = s_req.key; paths = s_req.paths; count = s_req.count; s_req.paths = NULL; s_req.has = 0; s_inflight = key;
         LightLock_Unlock(&s_lock);
 
-        int rc = cover_ensure(COVER_DIR, key, path);
+        int rc = cover_ensure_album(COVER_DIR, key, (const char (*)[TRACK_PATH_MAX])paths, count);
+        free(paths);
         CoverData *cd = NULL;
         if (rc == 0) { cd = malloc(sizeof *cd); if (!cd || cover_load(COVER_DIR, key, cd) != 0) { free(cd); cd = NULL; rc = 1; } }
 
@@ -44,6 +45,7 @@ static void worker(void *arg) {
 
 void covers_init(void) {
     memset(s_slot, 0, sizeof s_slot);
+    memset(&s_req, 0, sizeof s_req); memset(&s_done, 0, sizeof s_done); s_inflight = 0;
     LightEvent_Init(&s_wake, RESET_ONESHOT);
     LightLock_Init(&s_lock);
     s_run = true;
@@ -60,6 +62,7 @@ void covers_exit(void) {
     s_run = false; LightEvent_Signal(&s_wake);
     if (s_th) { threadJoin(s_th, U64_MAX); threadFree(s_th); s_th = NULL; }
     if (s_done.has) free(s_done.data);
+    free(s_req.paths); s_req.paths = NULL;
     C3D_FrameSync();                    /* nenhuma textura ainda em uso pela GPU */
     for (int i = 0; i < COVER_LRU; i++) free_slot(&s_slot[i]);
 }
@@ -126,15 +129,26 @@ int covers_pump(void) {
     return 1;
 }
 
-const CoverTex *covers_get(uint32_t key, const char *track_path) {
+const CoverTex *covers_get(const Library *lib, int track_id) {
+    if (track_id < 0 || track_id >= lib->count) return NULL;
+    uint32_t key = lib->tracks[track_id].art_key;
     for (int i = 0; i < COVER_LRU; i++) {
         if (s_slot[i].key == key) { s_slot[i].stamp = ++s_tick; return s_slot[i].valid ? &s_slot[i] : NULL; }
     }
     LightLock_Lock(&s_lock);
     bool busy = (s_inflight == key) || (s_done.has && s_done.key == key);
     if (!busy && !(s_req.has && s_req.key == key)) {
-        s_req.has = 1; s_req.key = key;
-        strncpy(s_req.path, track_path, sizeof s_req.path - 1); s_req.path[sizeof s_req.path - 1] = 0;
+        int count = 1;
+        for (int i = 0; i < lib->count; i++) if (i != track_id && lib->tracks[i].art_key == key) count++;
+        char (*paths)[TRACK_PATH_MAX] = malloc(sizeof *paths * (size_t)count);
+        if (paths) {
+            memcpy(paths[0], lib->tracks[track_id].path, sizeof *paths);
+            int n = 1;
+            for (int i = 0; i < lib->count; i++) if (i != track_id && lib->tracks[i].art_key == key)
+                memcpy(paths[n++], lib->tracks[i].path, sizeof *paths);
+            free(s_req.paths);
+            s_req.has = 1; s_req.key = key; s_req.paths = paths; s_req.count = count;
+        }
     }
     LightLock_Unlock(&s_lock);
     LightEvent_Signal(&s_wake);

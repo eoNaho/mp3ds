@@ -1,4 +1,5 @@
 #include "flacinfo.h"
+#include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,15 +11,20 @@ static uint32_t le32(const unsigned char *p) {
 static uint32_t be24(const unsigned char *p) { return ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | p[2]; }
 
 static void tag(FlacInfo *o, const char *s, size_t n) {
-    char b[256];
-    if (n >= sizeof b) n = sizeof b - 1;
+    char b[TITLE_MAX + 32];
+    if (n >= sizeof b) {
+        n = sizeof b - 1;
+        while (n && ((unsigned char)s[n] & 0xC0) == 0x80) n--;
+    }
     memcpy(b, s, n); b[n] = 0;
     char *eq = strchr(b, '='); if (!eq) return;
     *eq++ = 0;
-    if (!strcasecmp(b, "TITLE")) { strncpy(o->title, eq, sizeof o->title - 1); o->title[sizeof o->title - 1] = 0; }
-    else if (!strcasecmp(b, "ARTIST")) { strncpy(o->artist, eq, sizeof o->artist - 1); o->artist[sizeof o->artist - 1] = 0; }
-    else if (!strcasecmp(b, "ALBUM")) { strncpy(o->album, eq, sizeof o->album - 1); o->album[sizeof o->album - 1] = 0; }
+    if (!strcasecmp(b, "TITLE")) u_copy(o->title, sizeof o->title, eq);
+    else if (!strcasecmp(b, "ARTIST")) u_copy(o->artist, sizeof o->artist, eq);
+    else if (!strcasecmp(b, "ALBUM")) u_copy(o->album, sizeof o->album, eq);
+    else if (!strcasecmp(b, "ALBUMARTIST")) u_copy(o->album_artist, sizeof o->album_artist, eq);
     else if (!strcasecmp(b, "TRACKNUMBER")) o->track = atoi(eq);
+    else if (!strcasecmp(b, "DISCNUMBER")) o->disc = atoi(eq);
 }
 
 int flacinfo_probe(const char *path, FlacInfo *o) {

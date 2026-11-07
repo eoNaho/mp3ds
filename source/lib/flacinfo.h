@@ -1,9 +1,10 @@
 #pragma once
 #include <stdint.h>
+#include "config.h"
 
 typedef struct {
-    char title[96], artist[64], album[64];
-    int track;
+    char title[TITLE_MAX], artist[META_MAX], album[META_MAX], album_artist[META_MAX];
+    int track, disc;
     int sample_rate, channels, bits;
     uint64_t samples;
     long audio_start, audio_bytes;

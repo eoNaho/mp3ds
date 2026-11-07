@@ -204,6 +204,7 @@ static void t_decoder(void) {
     puts("ok decoder");
 }
 
+#if ENABLE_FLAC
 static void t_flac(void) {
     FlacInfo fi;
     const char *p = M "/Album A/03 - FLAC Teste.flac";
@@ -237,6 +238,8 @@ static void t_flac(void) {
     decoder_close(d);
     puts("ok flac");
 }
+
+#endif
 
 /* seek pela tabela Xing TOC (fixture com frame-info manual; CBR linear) */
 static void t_decoder_xing(void) {
@@ -503,12 +506,15 @@ static void t_cover(void) {
     puts("ok cover");
 }
 
+#include "test_regressions.inc"
+
 int main(void) {
     t_util(); t_id3(); t_mp3info(); t_decoder();
 #if ENABLE_FLAC
     t_flac();
 #endif
     t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playback_commands(); t_texture_tiles(); t_save_snapshot(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
+    t_unicode_and_index(); t_legacy_migration(); t_lookup_large(); t_cover_album_refresh(); t_gapless_stream(); t_resume_only();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

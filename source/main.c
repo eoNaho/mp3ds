@@ -7,6 +7,7 @@
 #include "util.h"
 #include "ui.h"
 #include "covers.h"
+#include "session.h"
 
 /* pilha da thread principal (padrao ~32 KB e curta para scan recursivo + stdio) */
 u32 __stacksize__ = 128 * 1024;
@@ -38,22 +39,39 @@ int main(void) {
         return 1;
     }
     covers_init();
+    int ptmu_ready = R_SUCCEEDED(ptmuInit());
+    u8 shell_open = 1; unsigned shell_poll = 0;
 
     static App app;
     app_init(&app);
-    if (app_needs_initial_scan(&app))
-        app_rescan(&app, on_scan, NULL);   /* somente no primeiro uso ou indice ausente/invalido */
+    if (app_needs_initial_scan(&app)) {
+        app_rescan(&app, on_scan, NULL);
+        /* IDs podem ter mudado apos migracao/scan; restaura por caminho. */
+        if (session_load(SESSION_PATH, &app.lib, &app.q) == 0) app.cur = queue_current(&app.q);
+    }   /* somente no primeiro uso ou indice ausente/invalido */
 
     int redraw = 2;   /* 2 frames: as telas do 3DS tem buffer duplo */
     while (aptMainLoop() && !app.quit) {
+        int was_scanning = app.scan_busy;
+        app_tick(&app);                 /* consome transicoes de audio antes de comandos manuais */
         if (ui_input(&app)) redraw = 2;
         if (app.quit) break;            /* START nao inicia mais trabalho nem outro frame */
-        app_tick(&app);
+        if (was_scanning && !app.scan_busy) { covers_exit(); covers_init(); redraw = 2; }
+        if (ptmu_ready && (shell_poll++ % 15) == 0) {
+            u8 open = shell_open;
+            if (R_SUCCEEDED(PTMU_GetShellState(&open)) && open != shell_open) {
+                shell_open = open; redraw = 2;
+            }
+        }
         /* Enquanto toca, fechar a tampa nao deve suspender o decoder nem o DSP. */
         aptSetSleepAllowed(player_state() != PS_PLAYING);
         if (app.want_rescan) { app.want_rescan = 0; app_start_rescan(&app); redraw = 2; }   /* reescaneia em thread */
         if (covers_ready()) redraw = 2;
 
+        if (!shell_open || app.screen_off) {
+            svcSleepThread(33 * 1000 * 1000); /* audio continua; GPU fica ociosa */
+            continue;
+        }
         if (redraw > 0 || player_state() == PS_PLAYING || app.toast_frames > 0 || app.scan_busy) {
             ui_draw(&app);
             if (redraw > 0) redraw--;
@@ -67,6 +85,7 @@ int main(void) {
     app_exit(&app);
     player_exit();
     covers_exit();
+    if (ptmu_ready) ptmuExit();
     ui_exit();
     return 0;
 }

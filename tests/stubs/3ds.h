@@ -37,3 +37,48 @@ static inline Thread threadCreate(void (*entry)(void *), void *arg, size_t stack
 }
 static inline void threadJoin(Thread t, uint64_t timeout) { (void)timeout; pthread_join(t->id, NULL); }
 static inline void threadFree(Thread t) { free(t); }
+
+/* API DSP minima para testar o player com um consumidor controlado pelo teste. */
+#include <time.h>
+#include <errno.h>
+typedef uint32_t u32;
+typedef uint16_t u16;
+typedef struct {
+    void *data_vaddr;
+    u32 nsamples;
+    bool looping;
+    volatile int status;
+    u16 sequence_id;
+} ndspWaveBuf;
+enum { NDSP_WBUF_DONE, NDSP_WBUF_QUEUED, NDSP_WBUF_PLAYING };
+#define NDSP_OUTPUT_STEREO 0
+#define NDSP_INTERP_LINEAR 0
+#define NDSP_FORMAT_STEREO_PCM16 0
+#define R_FAILED(rc) ((rc) < 0)
+static inline void LightEvent_WaitTimeout(LightEvent *e, int64_t ns) {
+    struct timespec until; clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_nsec += ns; until.tv_sec += until.tv_nsec / 1000000000; until.tv_nsec %= 1000000000;
+    pthread_mutex_lock(&e->mutex);
+    while (!e->signaled) if (pthread_cond_timedwait(&e->cv, &e->mutex, &until) == ETIMEDOUT) break;
+    e->signaled = 0; pthread_mutex_unlock(&e->mutex);
+}
+int ndspInit(void);
+void ndspExit(void);
+void ndspSetCallback(void (*cb)(void *), void *arg);
+void ndspChnWaveBufAdd(int ch, ndspWaveBuf *b);
+void ndspChnWaveBufClear(int ch);
+u16 ndspChnGetWaveBufSeq(int ch);
+u32 ndspChnGetSamplePos(int ch);
+void ndspChnSetPaused(int ch, bool paused);
+static inline void *linearAlloc(size_t bytes) { return malloc(bytes); }
+static inline void linearFree(void *p) { free(p); }
+static inline void ndspSetOutputMode(int mode) { (void)mode; }
+static inline void ndspChnReset(int ch) { (void)ch; }
+static inline void ndspChnSetInterp(int ch, int mode) { (void)ch; (void)mode; }
+static inline void ndspChnSetFormat(int ch, int mode) { (void)ch; (void)mode; }
+static inline void ndspChnSetRate(int ch, float rate) { (void)ch; (void)rate; }
+static inline void ndspChnSetMix(int ch, float *mix) { (void)ch; (void)mix; }
+static inline void DSP_FlushDataCache(void *p, u32 n) { (void)p; (void)n; }
+static inline void ndspChnIirBiquadSetEnable(int ch, bool on) { (void)ch; (void)on; }
+static inline void ndspChnIirBiquadSetParamsPeakingEqualizer(int ch, float f, float q, float g) { (void)ch; (void)f; (void)q; (void)g; }
+static inline int APT_SetAppCpuTimeLimit(int percent) { (void)percent; return 0; }

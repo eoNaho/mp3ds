@@ -1,3 +1,4 @@
+#include "config.h"
 #include "session.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,7 +6,7 @@
 #include <limits.h>
 
 int session_save(const char *file, const Library *lib, const Queue *q) {
-    char tmp[512];
+    char tmp[TRACK_PATH_MAX + 8];
     if (snprintf(tmp, sizeof tmp, "%s.tmp", file) >= (int)sizeof tmp) return -1;
     FILE *f = fopen(tmp, "wb");
     if (!f) return -1;
@@ -23,7 +24,7 @@ int session_save(const char *file, const Library *lib, const Queue *q) {
 int session_load(const char *file, const Library *lib, Queue *q) {
     FILE *f = fopen(file, "rb");
     if (!f) return -1;
-    char line[512]; int shuffle, repeat, slot;
+    char line[TRACK_PATH_MAX + 8]; int shuffle, repeat, slot;
     if (!fgets(line, sizeof line, f) ||
         sscanf(line, "mp3ds-session-1 %d %d %d", &shuffle, &repeat, &slot) != 3 ||
         shuffle < 0 || shuffle > 1 || repeat < REPEAT_OFF || repeat > REPEAT_ONE || slot < 0) {

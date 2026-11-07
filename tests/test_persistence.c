@@ -41,12 +41,14 @@ int main(void) {
     /* O SD permanece bloqueado enquanto a UI envia novos estados. */
     for (uint32_t i = 2; i <= 100; i++)
         assert(persistence_submit(&lib, &q, track.path, i, i == 2) == 0);
+    /* Um tick resume-only nao pode descartar a captura completa pendente. */
+    assert(persistence_submit_parts(NULL, NULL, "faixa.mp3", 101, 0, 0) == 0);
     memset(&track, 0, sizeof track); queue_free(&q);
     pthread_mutex_lock(&mutex);
     release_writer = 1; pthread_cond_signal(&gate);
     pthread_mutex_unlock(&mutex);
     persistence_exit();
-    assert(calls == 2 && last_ms == 100 && last_index == 1);
+    assert(calls == 2 && last_ms == 101 && last_index == 1);
     assert(!persistence_busy());
     assert(persistence_take_error() == 1 && persistence_take_error() == 0);
     puts("ok persistence: SD lento, ultimo estado, erros e encerramento");
