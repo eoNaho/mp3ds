@@ -5,21 +5,42 @@
 #include <string.h>
 
 #define FLAC_MAX_BLOCK 32768
+#define FLAC_IO_SIZE 8192
 
-typedef struct { FILE *f; uint64_t cache; int bits, error; } Bits;
+typedef struct {
+    FILE *f;
+    uint64_t cache;
+    int bits, error;
+    uint8_t *io;
+    int io_pos, io_len;
+} Bits;
 struct FlacDecoder {
     FILE *f; long audio_start, audio_bytes;
     uint32_t dur; uint64_t samples, decoded;
     int hz, channels, bits;
     Bits br;
     int32_t *ch[2], *res;
+    uint8_t io[FLAC_IO_SIZE];
     int block, pos;
 };
+
+static int byte_read(Bits *b) {
+    if (b->io_pos >= b->io_len) {
+        b->io_len = (int)fread(b->io, 1, FLAC_IO_SIZE, b->f);
+        b->io_pos = 0;
+        if (!b->io_len) { b->error = 1; return EOF; }
+    }
+    return b->io[b->io_pos++];
+}
 
 static uint32_t bits_read(Bits *b, int n) {
     uint32_t v = 0;
     while (n > 0) {
-        if (!b->bits) { int c = fgetc(b->f); if (c == EOF) { b->error = 1; return 0; } b->cache = (unsigned)c; b->bits = 8; }
+        if (!b->bits) {
+            int c = byte_read(b);
+            if (c == EOF) return 0;
+            b->cache = (unsigned)c; b->bits = 8;
+        }
         int take = n < b->bits ? n : b->bits;
         v = (v << take) | (uint32_t)((b->cache >> (b->bits - take)) & ((1u << take) - 1));
         b->bits -= take; n -= take;
@@ -69,7 +90,7 @@ static int residual(Bits *b, int32_t *dst, int block, int predictor) {
     }
     return b->error ? -1 : 0;
 }
-static int subframe(Bits *b, int32_t *x, int n, int bps) {
+static int subframe(Bits *b, int32_t *x, int n, int bps, int32_t *res) {
     if (bits_read(b, 1)) return -1;
     int type = (int)bits_read(b, 6), wasted = 0;
     if (bits_read(b, 1)) { wasted = 1; while (!bits_read(b, 1) && !b->error) wasted++; bps -= wasted; }
@@ -92,8 +113,7 @@ static int subframe(Bits *b, int32_t *x, int n, int bps) {
         shift = sbits(b, 5);
         for (int i = 0; i < order; i++) coeff[i] = sbits(b, prec);
     }
-    int32_t *r = (int32_t *)malloc(sizeof(int32_t) * (size_t)(n - order));
-    if (!r || residual(b, r, n, order) != 0) { free(r); return -1; }
+    if (residual(b, res, n, order) != 0) return -1;
     for (int i = order; i < n; i++) {
         int j = i - order; int64_t pred;
         if (type >= 8 && type <= 12) {
@@ -104,22 +124,22 @@ static int subframe(Bits *b, int32_t *x, int n, int bps) {
             pred = 0; for (int k = 0; k < order; k++) pred += (int64_t)coeff[k] * x[i - k - 1];
             if (shift >= 0) pred >>= shift; else pred <<= -shift;
         }
-        int64_t v = pred + r[j]; if (v > INT32_MAX) v = INT32_MAX; if (v < INT32_MIN) v = INT32_MIN; x[i] = (int32_t)v;
+        int64_t v = pred + res[j]; if (v > INT32_MAX) v = INT32_MAX; if (v < INT32_MIN) v = INT32_MIN; x[i] = (int32_t)v;
     }
     if (wasted) for (int i = 0; i < n; i++) x[i] *= (1 << wasted);
-    free(r); return b->error ? -1 : 0;
+    return b->error ? -1 : 0;
 }
 static int next_frame(FlacDecoder *d) {
     Bits *b = &d->br; align_bits(b); int c;
-    do { c = fgetc(d->f); if (c == EOF) return 0; } while (c != 0xff);
-    int c2 = fgetc(d->f);
+    do { c = byte_read(b); if (c == EOF) return 0; } while (c != 0xff);
+    int c2 = byte_read(b);
     while (c2 != EOF && (c2 & 0xfc) != 0xf8) {
-        c2 = c2 == 0xff ? fgetc(d->f) : fgetc(d->f);
+        c2 = byte_read(b);
     }
     if (c2 == EOF || (c2 & 2)) return 0;
-    int h3 = fgetc(d->f);
+    int h3 = byte_read(b);
     if (h3 == EOF) return 0;
-    int h4 = fgetc(d->f);
+    int h4 = byte_read(b);
     if (h4 == EOF) return 0;
     int bs = h3 >> 4, sr = h3 & 15;
     int ca = h4 >> 4, sample_size = (h4 >> 1) & 7;
@@ -139,17 +159,17 @@ static int next_frame(FlacDecoder *d) {
     int bps = d->bits;
     if (ca < 8 && ca + 1 != d->channels) return 0;
     if (ca == 0) {
-        if (subframe(b, d->ch[0], n, bps)) return 0;
+        if (subframe(b, d->ch[0], n, bps, d->res)) return 0;
     } else if (ca == 1) {
-        if (subframe(b, d->ch[0], n, bps) || subframe(b, d->ch[1], n, bps)) return 0;
+        if (subframe(b, d->ch[0], n, bps, d->res) || subframe(b, d->ch[1], n, bps, d->res)) return 0;
     } else if (ca == 8) {
-        if (subframe(b, d->ch[0], n, bps) || subframe(b, d->ch[1], n, bps + 1)) return 0;
+        if (subframe(b, d->ch[0], n, bps, d->res) || subframe(b, d->ch[1], n, bps + 1, d->res)) return 0;
         for (int i = 0; i < n; i++) d->ch[1][i] = d->ch[0][i] - d->ch[1][i];
     } else if (ca == 9) {
-        if (subframe(b, d->ch[0], n, bps + 1) || subframe(b, d->ch[1], n, bps)) return 0;
+        if (subframe(b, d->ch[0], n, bps + 1, d->res) || subframe(b, d->ch[1], n, bps, d->res)) return 0;
         for (int i = 0; i < n; i++) d->ch[0][i] += d->ch[1][i];
     } else if (ca == 10) {
-        if (subframe(b, d->ch[0], n, bps) || subframe(b, d->ch[1], n, bps + 1)) return 0;
+        if (subframe(b, d->ch[0], n, bps, d->res) || subframe(b, d->ch[1], n, bps + 1, d->res)) return 0;
         for (int i = 0; i < n; i++) {
             int32_t side = d->ch[1][i];
             int32_t mid = d->ch[0][i] * 2 + (side & 1);
@@ -158,7 +178,7 @@ static int next_frame(FlacDecoder *d) {
         }
     } else {
         if (d->channels != 2) return 0;
-        if (subframe(b, d->ch[0], n, bps) || subframe(b, d->ch[1], n, bps)) return 0;
+        if (subframe(b, d->ch[0], n, bps, d->res) || subframe(b, d->ch[1], n, bps, d->res)) return 0;
     }
     align_bits(b); bits_read(b, 16); /* frame CRC16 */
     d->block = n; d->pos = 0; return 1;
@@ -174,9 +194,10 @@ FlacDecoder *flac_decoder_open(const char *path) {
     FlacDecoder *d = calloc(1, sizeof *d); if (!d) return NULL;
     d->f = fopen(path, "rb"); d->audio_start=i.audio_start; d->audio_bytes=i.audio_bytes; d->hz=i.sample_rate; d->channels=i.channels; d->bits=i.bits; d->samples=i.samples;
     d->dur = i.samples ? (uint32_t)(i.samples * 1000 / i.sample_rate) : 0;
-    d->ch[0]=malloc(sizeof(int32_t)*FLAC_MAX_BLOCK); d->ch[1]=malloc(sizeof(int32_t)*FLAC_MAX_BLOCK); d->res=NULL;
-    if (!d->f || !d->ch[0] || !d->ch[1]) { flac_decoder_close(d); return NULL; }
-    fseek(d->f, d->audio_start, SEEK_SET); d->br.f=d->f; return d;
+    d->ch[0]=malloc(sizeof(int32_t)*FLAC_MAX_BLOCK); d->ch[1]=malloc(sizeof(int32_t)*FLAC_MAX_BLOCK);
+    d->res=malloc(sizeof(int32_t)*FLAC_MAX_BLOCK);
+    if (!d->f || !d->ch[0] || !d->ch[1] || !d->res) { flac_decoder_close(d); return NULL; }
+    fseek(d->f, d->audio_start, SEEK_SET); d->br.f=d->f; d->br.io=d->io; return d;
 }
 void flac_decoder_close(FlacDecoder *d) { if (!d) return; if (d->f) fclose(d->f); free(d->ch[0]); free(d->ch[1]); free(d->res); free(d); }
 int flac_decoder_sample_rate(const FlacDecoder *d) { return d->hz; }
@@ -196,7 +217,7 @@ void flac_decoder_seek_ms(FlacDecoder *d, uint32_t ms) {
        the player; normal sequential playback is unaffected. */
     uint64_t target = d->samples ? (uint64_t)d->hz * ms / 1000u : 0;
     fseek(d->f, d->audio_start, SEEK_SET);
-    d->br.cache = d->br.bits = d->br.error = 0;
+    d->br.cache = d->br.bits = d->br.error = d->br.io_pos = d->br.io_len = 0;
     d->block = d->pos = 0;
     d->decoded = 0;
     while (d->decoded < target) {

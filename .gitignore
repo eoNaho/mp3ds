@@ -6,3 +6,4 @@ build/
 *.map
 tests/test_host
 tests/fixtures/
+/music

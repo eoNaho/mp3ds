@@ -1,12 +1,12 @@
-/* Reproducao via ndsp. A thread de audio decodifica (minimp3) e mantem NBUF buffers na fila do DSP. */
+/* Reproducao via ndsp. A thread de audio decodifica e mantem buffers na fila do DSP. */
 #include <3ds.h>
 #include <string.h>
 #include "player.h"
 #include "decoder.h"
 
 #define CH          0
-#define NBUF        4
-#define BUF_FRAMES  4096                 /* ~93 ms a 44,1 kHz => 4 buffers = ~370 ms de folga */
+#define NBUF        6
+#define BUF_FRAMES  8192                 /* ~186 ms a 44,1 kHz => ~1,1 s de folga */
 #define STACK_SZ    (48 * 1024)
 
 enum { CMD_NONE = 0, CMD_PLAY, CMD_STOP, CMD_SEEK };

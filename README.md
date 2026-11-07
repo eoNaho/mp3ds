@@ -6,7 +6,7 @@ e visualizador simples.
 ## Estado do projeto
 | Parte | Estado |
 |---|---|
-| ID3 (v2.2/2.3/2.4 + v1), FLAC (Vorbis Comments, mono/estéreo, 8/16/24-bit, seek), duração, decoders MP3/FLAC, visualizador, fila, playlists, biblioteca/índice, cache de capas, busca com filtro, álbuns, retomada da última faixa | **Testado no PC** (`make test`, com ASan/UBSan) |
+| ID3 (v2.2/2.3/2.4 + v1), FLAC (Vorbis Comments, mono/estéreo, 8/16/24-bit, seek), duração, decoders MP3/FLAC, visualizador, fila, playlists, biblioteca/índice, cache de capas, busca com filtro, álbuns, retomada da última faixa | **Testes preparados no PC** (`make test`, com ASan/UBSan) |
 | Áudio via `ndsp` (equalizador por IIR do DSP), capas na GPU, UI `citro2d`, scan da biblioteca em thread | **Compilado para 3DS, ainda não testado no hardware** |
 
 ## Compilar
