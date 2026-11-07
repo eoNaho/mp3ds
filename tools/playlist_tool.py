@@ -7,7 +7,7 @@ Formato do arquivo de trabalho:
   "music_root": "/home/user/Music",
   "sd_root": "sdmc:/Music",
   "playlists": {
-    "Corrida": ["Artist/Album/faixa.mp3", "outra.mp3"]
+    "Corrida": ["Artist/Album/faixa.mp3", "outra.flac"]
   }
 }
 
@@ -110,8 +110,8 @@ def cmd_add(args: argparse.Namespace) -> int:
     if not data.get("music_root"):
         raise ValueError("defina music_root primeiro com 'init'")
     rel = rel_path(args.track, root)
-    if not rel.lower().endswith(".mp3"):
-        raise ValueError("a faixa precisa ser .mp3")
+    if not rel.lower().endswith((".mp3", ".flac")):
+        raise ValueError("a faixa precisa ser .mp3 ou .flac")
     items = data["playlists"].setdefault(args.playlist, [])
     if rel not in items:
         items.append(rel)

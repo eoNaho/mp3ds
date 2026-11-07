@@ -6,6 +6,7 @@
 #include <string.h>
 #include "id3.h"
 #include "mp3info.h"
+#include "flacinfo.h"
 #include "decoder.h"
 #include "viz.h"
 #include "queue.h"
@@ -168,6 +169,40 @@ static void t_decoder(void) {
     puts("ok decoder");
 }
 
+static void t_flac(void) {
+    FlacInfo fi;
+    const char *p = M "/Album A/03 - FLAC Teste.flac";
+    CHECK(flacinfo_probe(p, &fi) == 0);
+    CHECK(!strcmp(fi.title, "Teste FLAC"));
+    CHECK(!strcmp(fi.artist, "Artista FLAC"));
+    CHECK(!strcmp(fi.album, "Álbum FLAC"));
+    CHECK(fi.track == 7 && fi.sample_rate == 44100 && fi.channels == 2 && fi.bits == 16);
+    CHECK(fi.samples == 88200 && fi.audio_start > 0 && fi.audio_bytes > 0);
+
+    Decoder *d = decoder_open(p);
+    CHECK(d && decoder_sample_rate(d) == 44100);
+    CHECK(decoder_duration_ms(d) == 2000);
+    static int16_t buf[4096 * 2];
+    long total = 0; int n; int different = 0;
+    while ((n = decoder_read(d, buf, 4096)) > 0) {
+        for (int i = 0; i < n; i++) if (buf[2 * i] != buf[2 * i + 1]) different = 1;
+        total += n;
+    }
+    CHECK(total == 88200 && different);
+    decoder_seek_ms(d, 1000);
+    long after = 0;
+    while ((n = decoder_read(d, buf, 4096)) > 0) after += n;
+    CHECK(after > 33000 && after < 55000); /* seek aproximado por bytes */
+    decoder_close(d);
+
+    d = decoder_open(M "/Sem Tag/mono.flac");
+    CHECK(d && decoder_sample_rate(d) == 22050);
+    n = decoder_read(d, buf, 1024); CHECK(n == 1024);
+    for (int i = 0; i < n; i++) CHECK(buf[2 * i] == buf[2 * i + 1]);
+    decoder_close(d);
+    puts("ok flac");
+}
+
 /* seek pela tabela Xing TOC (fixture com frame-info manual; CBR linear) */
 static void t_decoder_xing(void) {
     Id3Info id; Mp3Info mi;
@@ -282,7 +317,7 @@ static int on_prog(int found, const char *cur, void *ud) { (void)cur; (void)ud; 
 static void t_library(void) {
     Library l = {0};
     CHECK(library_scan(&l, M, on_prog, NULL) == 0);
-    CHECK(l.count == 5); CHECK(g_progress == 5); CHECK(l.last_parsed == 5);   /* quebrado.mp3 e .txt ficam de fora */
+    CHECK(l.count == 7); CHECK(g_progress == 7); CHECK(l.last_parsed == 7);   /* quebrado.mp3 e .txt ficam de fora */
     CHECK(!strcasecmp(l.tracks[0].artist, "Artista Ñandú") || l.tracks[0].artist[0]);
     int i = -1; for (int k = 0; k < l.count; k++) if (!strcmp(l.tracks[k].title, "Canção Teste")) i = k;
     CHECK(i >= 0); CHECK(l.tracks[i].track == 3); CHECK(l.tracks[i].duration_ms > 1900);
@@ -298,7 +333,7 @@ static void t_library(void) {
     Library l2 = {0}; CHECK(library_load_index(&l2, "fixtures/lib.idx") == 0);
     CHECK(l2.count == l.count && !memcmp(l2.tracks, l.tracks, sizeof(Track) * l.count));
     CHECK(library_scan(&l2, M, NULL, NULL) == 0);
-    CHECK(l2.count == 5 && l2.last_parsed == 0);                 /* incremental: nada releu */
+    CHECK(l2.count == 7 && l2.last_parsed == 0);                 /* incremental: nada releu */
     CHECK(library_find_path(&l2, l.tracks[i].path) >= 0); CHECK(library_find_path(&l2, "nao/existe") == -1);
     library_free(&l); library_free(&l2);
     puts("ok library");
@@ -322,7 +357,7 @@ static void t_cover(void) {
 }
 
 int main(void) {
-    t_util(); t_id3(); t_mp3info(); t_decoder(); t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
+    t_util(); t_id3(); t_mp3info(); t_decoder(); t_flac(); t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_playlist(); t_library(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover();
     puts("TODOS OS TESTES PASSARAM");
     return 0;
 }

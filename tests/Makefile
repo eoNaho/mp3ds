@@ -1,7 +1,7 @@
 # Testes no PC (gcc nativo). Requer: python3 + pip install lameenc mutagen pillow
 SRC := ../source
-CFILES := test_host.c $(SRC)/lib/util.c $(SRC)/lib/id3.c $(SRC)/lib/mp3info.c $(SRC)/lib/library.c $(SRC)/lib/queue.c \
-          $(SRC)/lib/playlist.c $(SRC)/lib/resume.c $(SRC)/lib/cover.c $(SRC)/audio/decoder.c $(SRC)/audio/viz.c $(SRC)/third_party/third_party_impl.c
+CFILES := test_host.c $(SRC)/lib/util.c $(SRC)/lib/id3.c $(SRC)/lib/mp3info.c $(SRC)/lib/flacinfo.c $(SRC)/lib/library.c $(SRC)/lib/queue.c \
+          $(SRC)/lib/playlist.c $(SRC)/lib/resume.c $(SRC)/lib/cover.c $(SRC)/audio/flac.c $(SRC)/audio/decoder.c $(SRC)/audio/viz.c $(SRC)/third_party/third_party_impl.c
 INC := -I$(SRC) -I$(SRC)/lib -I$(SRC)/audio -I$(SRC)/third_party
 
 all: run

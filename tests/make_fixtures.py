@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Gera MP3s de teste (seno 1 kHz) com tags ID3 variadas e capas, em tests/fixtures/music."""
-import io, math, os, struct, sys
+import io, math, os, struct, subprocess, sys, wave
 import lameenc
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, APIC, ID3NoHeaderError
 from PIL import Image
@@ -27,6 +27,28 @@ def cover_jpeg(rgb=(200, 30, 30), size=600):
     b = io.BytesIO(); img.save(b, "JPEG", quality=85); return b.getvalue()
 
 def write(path, data): open(path, "wb").write(data)
+
+def sine_wav(path, seconds=2.0, hz=44100, freq=330, channels=2):
+    n = int(seconds * hz)
+    pcm = bytearray()
+    for i in range(n):
+        left = int(10000 * math.sin(2 * math.pi * freq * i / hz))
+        right = int(7000 * math.sin(2 * math.pi * (freq * 2) * i / hz))
+        pcm += struct.pack("<h", left)
+        if channels == 2:
+            pcm += struct.pack("<h", right)
+    with wave.open(path, "wb") as f:
+        f.setnchannels(channels); f.setsampwidth(2); f.setframerate(hz); f.writeframes(pcm)
+
+def make_flac(path, title, artist, album, track, channels=2):
+    wav = path + ".wav"
+    sine_wav(wav, channels=channels)
+    subprocess.run([
+        "flac", "-f", "-s", wav, "-o", path,
+        f"--tag=TITLE={title}", f"--tag=ARTIST={artist}",
+        f"--tag=ALBUM={album}", f"--tag=TRACKNUMBER={track}",
+    ], check=True)
+    os.unlink(wav)
 
 # 1) com tags UTF-8 (ID3v2.4), capa embutida vermelha
 p = out + "/Album A/01 - Cancao Teste.mp3"; write(p, sine_mp3())
@@ -55,6 +77,16 @@ write(p, d + tag)
 # 5) lixo: nao-MP3 com extensao .mp3 e um .txt
 write(out + "/quebrado.mp3", b"isto nao e um mp3" * 100)
 write(out + "/notas.txt", b"ignorar")
+
+# 7) FLAC lossless, com Vorbis Comments UTF-8 e canais independentes
+make_flac(out + "/Album A/03 - FLAC Teste.flac", "Teste FLAC", "Artista FLAC", "Álbum FLAC", 7)
+
+# 8) FLAC mono sem tags: valida duplicacao L/R e fallback do nome do arquivo
+mono = out + "/Sem Tag/mono.flac"
+wav = mono + ".wav"
+sine_wav(wav, seconds=1.0, hz=22050, freq=550, channels=1)
+subprocess.run(["flac", "-f", "-s", wav, "-o", mono], check=True)
+os.unlink(wav)
 
 # 6) Xing + TOC (frame-info manual antes de um MP3 CBR): serve para testar seek pela tabela
 p = out + "/xingtoc.mp3"

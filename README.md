@@ -1,12 +1,12 @@
-# mp3ds — MP3 player leve para Nintendo 3DS
+# mp3ds — Player leve de MP3/FLAC para Nintendo 3DS
 
-Player homebrew focado em MP3, com biblioteca lida do cartão SD, capas com cache, playlists `.m3u`
+Player homebrew focado em MP3 e FLAC, com biblioteca lida do cartão SD, capas com cache, playlists `.m3u`
 e visualizador simples.
 
 ## Estado do projeto
 | Parte | Estado |
 |---|---|
-| ID3 (v2.2/2.3/2.4 + v1), duração, decoder MP3 (seek Xing TOC), visualizador, fila, playlists, biblioteca/índice, cache de capas, busca com filtro, álbuns, retomada da última faixa | **Testado no PC** (`make test`, com ASan/UBSan) |
+| ID3 (v2.2/2.3/2.4 + v1), FLAC (Vorbis Comments, mono/estéreo, 8/16/24-bit, seek), duração, decoders MP3/FLAC, visualizador, fila, playlists, biblioteca/índice, cache de capas, busca com filtro, álbuns, retomada da última faixa | **Testado no PC** (`make test`, com ASan/UBSan) |
 | Áudio via `ndsp` (equalizador por IIR do DSP), capas na GPU, UI `citro2d`, scan da biblioteca em thread | **Compilado para 3DS, ainda não testado no hardware** |
 
 ## Compilar
@@ -24,7 +24,7 @@ Sem instalar nada: dê push no GitHub; o workflow `.github/workflows/build.yml` 
 
 ## Requisitos no console
 - `dspfirm.cdc` dumpado (app **DSP1**), senão o `ndsp` não inicia — o app avisa na tela.
-- MP3 em `sdmc:/Music` (mude `MUSIC_ROOT` em `source/config.h`).
+- MP3/FLAC em `sdmc:/Music` (mude `MUSIC_ROOT` em `source/config.h`).
 - Dados do app em `sdmc:/3ds/mp3ds/` (`library.idx`, `covers/`, `playlists/*.m3u`, `resume.txt`).
 - Durante a reprodução, fechar a tampa mantém a música tocando; ao pausar ou parar, a suspensão volta a ser permitida.
 
@@ -56,7 +56,8 @@ e `last_played`; índices antigos são migrados automaticamente para o formato v
 ## Testes no PC
 ```
 pip install lameenc mutagen pillow
-make test        # gera MP3s sintéticos com tags/capas e roda tudo com sanitizers
+# também é necessário o executável flac no PATH
+make test        # gera MP3/FLAC sintéticos com tags/capas e roda tudo com sanitizers
 ```
 
 ## Organizar playlists no PC
@@ -69,7 +70,7 @@ portanto o arquivo pode ser movido entre computadores.
 ```sh
 python3 tools/playlist_tool.py --file minhas-playlists.json init "$HOME/Music"
 python3 tools/playlist_tool.py --file minhas-playlists.json add \
-  "Favoritas" "$HOME/Music/Artista/Album/Musica.mp3"
+  "Favoritas" "$HOME/Music/Artista/Album/Musica.flac"
 python3 tools/playlist_tool.py --file minhas-playlists.json list
 python3 tools/playlist_tool.py --file minhas-playlists.json export '*' \
   /media/3DS/3ds/mp3ds/playlists
@@ -83,8 +84,8 @@ playlists no app. Mais exemplos estão em [`tools/README.md`](tools/README.md).
 ```
 source/main.c            loop principal (redesenha só quando precisa)
 source/app.c             estado: fila, playlists, álbuns, filtro, retomada, scan em thread
-source/audio/            player (ndsp+thread, EQ IIR), decoder (minimp3 + Xing TOC), viz (Goertzel)
-source/lib/              id3, mp3info, library (índice, busca, álbuns), playlist, queue, cover, resume   <- portáteis
+source/audio/            player (ndsp+thread, EQ IIR), decoders MP3/FLAC, viz (Goertzel)
+source/lib/              id3, mp3info, flacinfo, library (índice, busca, álbuns), playlist, queue, cover, resume   <- portáteis
 source/ui/               ui (citro2d, teclado de busca), covers (texturas + thread)
 source/third_party/      minimp3, stb_image
 tools/                   organizador de playlists no PC (JSON → M3U8)

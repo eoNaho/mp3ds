@@ -1,6 +1,7 @@
 #include "library.h"
 #include "id3.h"
 #include "mp3info.h"
+#include "flacinfo.h"
 #include "util.h"
 #include <dirent.h>
 #include <stdio.h>
@@ -173,6 +174,8 @@ int library_build_albums(const Library *l, AlbumGroup *out, int max) {
 }
 
 static int is_mp3(const char *n) { size_t a = strlen(n); return a > 4 && !strcasecmp(n + a - 4, ".mp3"); }
+static int is_flac(const char *n) { size_t a = strlen(n); return a > 5 && !strcasecmp(n + a - 5, ".flac"); }
+static int is_audio(const char *n) { return is_mp3(n) || is_flac(n); }
 
 static void dir_of(const char *path, char *out, size_t cap) {
     u_copy(out, cap, path);
@@ -180,6 +183,24 @@ static void dir_of(const char *path, char *out, size_t cap) {
 }
 
 static int build_track(const char *path, const struct stat *st, Track *t) {
+    if (is_flac(path)) {
+        FlacInfo fi;
+        if (flacinfo_probe(path, &fi) != 0) return -1;
+        memset(t, 0, sizeof *t); u_copy(t->path, sizeof t->path, path);
+        if (fi.title[0]) u_copy(t->title, sizeof t->title, fi.title);
+        else {
+            const char *b = strrchr(path, '/'); b = b ? b + 1 : path;
+            u_copy(t->title, sizeof t->title, b); char *dot = strrchr(t->title, '.'); if (dot) *dot = 0;
+        }
+        u_copy(t->artist, sizeof t->artist, fi.artist[0] ? fi.artist : "Desconhecido");
+        u_copy(t->album, sizeof t->album, fi.album);
+        t->track = (uint32_t)fi.track;
+        t->duration_ms = fi.sample_rate ? (uint32_t)(fi.samples * 1000 / fi.sample_rate) : 0;
+        t->size = (uint32_t)st->st_size; t->mtime = (int64_t)st->st_mtime; t->added = (int64_t)time(NULL);
+        if (fi.album[0]) { char k[200]; snprintf(k, sizeof k, "%s\x1f%s", t->album, t->artist); t->art_key = u_fnv1a(k); }
+        else { char d[256]; dir_of(path, d, sizeof d); t->art_key = u_fnv1a(d); }
+        return 0;
+    }
     Id3Info id; Mp3Info mi;
     if (id3_read(path, &id) != 0) return -1;
     if (mp3info_probe(path, id.audio_start, &mi) != 0) return -1;   /* nao e MP3 tocavel */
@@ -219,7 +240,7 @@ static void walk(Scan *s, const char *dir, int depth) {
         struct stat st;
         if (stat(p, &st) != 0) continue;
         if (S_ISDIR(st.st_mode)) { walk(s, p, depth + 1); continue; }
-        if (!is_mp3(e->d_name)) continue;
+        if (!is_audio(e->d_name)) continue;
 
         u_copy(s->key.path, sizeof s->key.path, p);
         const Track *o = s->nold ? bsearch(&s->key, s->old, s->nold, sizeof(Track), cmp_path) : NULL;

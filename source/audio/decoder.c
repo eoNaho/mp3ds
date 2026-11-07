@@ -2,13 +2,17 @@
 #include "id3.h"
 #include "mp3info.h"
 #include "minimp3.h"
+#include "flac.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define IN_CAP (16 * 1024)
 
 struct Decoder {
+    int kind;                         /* 0 MP3, 1 FLAC */
+    FlacDecoder *flac;
     FILE *f;
     mp3dec_t dec;
     uint8_t *in; int in_len, eof;
@@ -55,6 +59,17 @@ static int decode_next(Decoder *d) {
 }
 
 Decoder *decoder_open(const char *path) {
+    size_t plen = strlen(path);
+    if (plen >= 5 && !strcasecmp(path + plen - 5, ".flac")) {
+        Decoder *d = calloc(1, sizeof *d);
+        if (!d) return NULL;
+        d->flac = flac_decoder_open(path);
+        if (!d->flac) { free(d); return NULL; }
+        d->kind = 1;
+        d->hz = flac_decoder_sample_rate(d->flac);
+        d->dur = flac_decoder_duration_ms(d->flac);
+        return d;
+    }
     Id3Info id; Mp3Info mi;
     if (id3_read(path, &id) != 0) return NULL;
     if (mp3info_probe(path, id.audio_start, &mi) != 0) return NULL;
@@ -74,14 +89,16 @@ Decoder *decoder_open(const char *path) {
 
 void decoder_close(Decoder *d) {
     if (!d) return;
+    if (d->kind == 1) { flac_decoder_close(d->flac); free(d); return; }
     if (d->f) fclose(d->f);
     free(d->in); free(d);
 }
 
-int decoder_sample_rate(const Decoder *d) { return d->hz; }
-uint32_t decoder_duration_ms(const Decoder *d) { return d->dur; }
+int decoder_sample_rate(const Decoder *d) { return d->kind == 1 ? flac_decoder_sample_rate(d->flac) : d->hz; }
+uint32_t decoder_duration_ms(const Decoder *d) { return d->kind == 1 ? flac_decoder_duration_ms(d->flac) : d->dur; }
 
 int decoder_read(Decoder *d, int16_t *out, int max) {
+    if (d->kind == 1) return flac_decoder_read(d->flac, out, max);
     int done = 0;
     while (done < max) {
         if (d->pcm_pos >= d->pcm_frames && !decode_next(d)) break;
@@ -112,6 +129,7 @@ static long byte_for_ms(const Decoder *d, uint32_t ms) {
 }
 
 void decoder_seek_ms(Decoder *d, uint32_t ms) {
+    if (d->kind == 1) { flac_decoder_seek_ms(d->flac, ms); return; }
     if (d->dur == 0) ms = 0; else if (ms >= d->dur) ms = d->dur - 1;
     long off = d->audio_start + byte_for_ms(d, ms);
     fseek(d->f, off, SEEK_SET);
