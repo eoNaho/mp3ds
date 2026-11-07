@@ -59,6 +59,26 @@ pip install lameenc mutagen pillow
 make test        # gera MP3s sintéticos com tags/capas e roda tudo com sanitizers
 ```
 
+## Organizar playlists no PC
+
+O diretório `tools/` contém um organizador sem dependências externas:
+`tools/playlist_tool.py`. Ele mantém um `playlists.json` editável no PC e exporta
+`.m3u8` compatíveis com o 3DS. Os caminhos ficam relativos à pasta de músicas,
+portanto o arquivo pode ser movido entre computadores.
+
+```sh
+python3 tools/playlist_tool.py --file minhas-playlists.json init "$HOME/Music"
+python3 tools/playlist_tool.py --file minhas-playlists.json add \
+  "Favoritas" "$HOME/Music/Artista/Album/Musica.mp3"
+python3 tools/playlist_tool.py --file minhas-playlists.json list
+python3 tools/playlist_tool.py --file minhas-playlists.json export '*' \
+  /media/3DS/3ds/mp3ds/playlists
+```
+
+O comando `export` gera entradas como `sdmc:/Music/Artista/Album/Musica.mp3`.
+Copie os `.m3u8` gerados para `sdmc:/3ds/mp3ds/playlists/` e reescaneie as
+playlists no app. Mais exemplos estão em [`tools/README.md`](tools/README.md).
+
 ## Estrutura
 ```
 source/main.c            loop principal (redesenha só quando precisa)
@@ -67,6 +87,7 @@ source/audio/            player (ndsp+thread, EQ IIR), decoder (minimp3 + Xing T
 source/lib/              id3, mp3info, library (índice, busca, álbuns), playlist, queue, cover, resume   <- portáteis
 source/ui/               ui (citro2d, teclado de busca), covers (texturas + thread)
 source/third_party/      minimp3, stb_image
+tools/                   organizador de playlists no PC (JSON → M3U8)
 tests/                   testes no PC
 ```
 
