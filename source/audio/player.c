@@ -7,6 +7,7 @@
 #include "commands.h"
 #include "stream.h"
 #include "util.h"
+#include "exit_trace.h"
 
 #define CH          0
 #define NBUF        4
@@ -23,6 +24,7 @@ static LightEvent  s_ev;
 static LightLock   s_lock;
 static Thread      s_th;
 static volatile bool s_run;
+static bool s_controls_ready, s_dsp_ready;
 static PlaybackCommand s_pend;
 static Track s_play_track, s_next_track;
 static int s_next_id = -1, s_started_id = -1;
@@ -153,7 +155,19 @@ static void audio_thread(void *arg) {
 }
 
 int player_init(void) {
+    if (s_controls_ready) return 0;
+    LightEvent_Init(&s_ev, RESET_ONESHOT);
+    LightLock_Init(&s_lock);
+    viz_init(&s_viz);
+    s_controls_ready = true;
+    return 0;
+}
+
+/* Sem reproducao, nao abre o DSP nem cria a thread de audio. */
+static int start_hardware(void) {
+    if (s_dsp_ready) return 0;
     if (R_FAILED(ndspInit())) return -1;
+    s_dsp_ready = true;
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
     ndspChnReset(CH);
     ndspChnSetInterp(CH, NDSP_INTERP_LINEAR);
@@ -163,12 +177,10 @@ int player_init(void) {
     ndspChnSetMix(CH, mix);
     for (int i = 0; i < NBUF; i++) {
         pcm[i] = (int16_t *)linearAlloc(BUF_FRAMES * 4);
+        if (!pcm[i]) goto fail;
         memset(&wb[i], 0, sizeof wb[i]);
         wb[i].status = NDSP_WBUF_DONE;
     }
-    LightEvent_Init(&s_ev, RESET_ONESHOT);
-    LightLock_Init(&s_lock);
-    viz_init(&s_viz);
     player_eq_apply();
     ndspSetCallback(on_frame, NULL);
 
@@ -179,17 +191,30 @@ int player_init(void) {
     APT_SetAppCpuTimeLimit(70);                                  /* audio/UI com folga; o 3DS pode reduzir o clock em repouso */
     s_th = threadCreate(audio_thread, NULL, STACK_SZ, prio, 1, false);
     if (!s_th) s_th = threadCreate(audio_thread, NULL, STACK_SZ, prio, -1, false);
-    return s_th ? 0 : -2;
+    if (s_th) return 0;
+fail:
+    player_exit();
+    return -2;
 }
 
 void player_exit(void) {
+    if (!s_controls_ready) return;
+    exit_trace("audio: request stop");
     s_run = false;
     LightEvent_Signal(&s_ev);
+    exit_trace("audio: waiting decoder thread");
     if (s_th) { threadJoin(s_th, U64_MAX); threadFree(s_th); s_th = NULL; }
+    exit_trace("audio: decoder thread stopped");
+    if (!s_dsp_ready) { s_state = PS_STOPPED; exit_trace("audio: DSP was not opened"); return; }
+    exit_trace("audio: disabling DSP callback");
     ndspSetCallback(NULL, NULL);
+    exit_trace("audio: clearing DSP channel");
     ndspChnWaveBufClear(CH);
     /* O DSP precisa terminar antes de liberar os buffers que ele ainda pode ler. */
+    exit_trace("audio: entering ndspExit");
     ndspExit();
+    exit_trace("audio: ndspExit returned");
+    s_dsp_ready = false;
     s_state = PS_STOPPED;
     for (int i = 0; i < NBUF; i++) if (pcm[i]) { linearFree(pcm[i]); pcm[i] = NULL; }
 }
@@ -212,6 +237,11 @@ void player_play_seek(const char *path, uint32_t start_ms) {
     Track t = {0}; u_copy(t.path, sizeof t.path, path); player_play_track(&t, start_ms);
 }
 void player_play_track(const Track *track, uint32_t start_ms) {
+    if (!s_controls_ready) player_init();
+    if (start_hardware() != 0) {
+        LightLock_Lock(&s_lock); s_state = PS_STOPPED; s_finished = -2; LightLock_Unlock(&s_lock);
+        return;
+    }
     LightLock_Lock(&s_lock);
     s_play_track = *track; s_paused = false; s_finished = 0; s_started_id = s_staged_id = -1;
     s_next_id = -1; s_next_version++;
@@ -298,6 +328,7 @@ void player_get_viz(Viz *out) {
 }
 
 void player_eq_apply(void) {
+    if (!s_dsp_ready) return;
     if (s_eq_preset <= 0 || s_eq_preset >= EQ_N) { ndspChnIirBiquadSetEnable(CH, false); return; }
     const EqPreset *p = &s_eq[s_eq_preset];
     ndspChnIirBiquadSetParamsPeakingEqualizer(CH, p->f0, p->q, p->gain);

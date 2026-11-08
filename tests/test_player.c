@@ -10,7 +10,7 @@
 
 static pthread_mutex_t dsp_lock = PTHREAD_MUTEX_INITIALIZER;
 static ndspWaveBuf *buffers[8];
-static int count, paused, clears;
+static int count, paused, clears, dsp_inits, dsp_exits, fail_init;
 static u32 position;
 static u16 sequence;
 static void (*callback)(void *);
@@ -18,8 +18,8 @@ static void *callback_arg;
 static long played;
 static uint64_t hash = 1;
 
-int ndspInit(void) { return 0; }
-void ndspExit(void) {}
+int ndspInit(void) { dsp_inits++; return fail_init ? -1 : 0; }
+void ndspExit(void) { dsp_exits++; }
 void ndspSetCallback(void (*cb)(void *), void *arg) { callback = cb; callback_arg = arg; }
 void ndspChnSetPaused(int ch, bool on) { (void)ch; pthread_mutex_lock(&dsp_lock); paused = on; pthread_mutex_unlock(&dsp_lock); }
 void ndspChnWaveBufClear(int ch) {
@@ -63,6 +63,13 @@ static Track track(const char *path) {
 }
 int main(void) {
     alarm(15);
+    /* Abrir e sair sem tocar nao pode inicializar/encerrar o DSP. */
+    assert(player_init() == 0);
+    player_eq_set(3); player_stop();
+    Viz idle; player_get_viz(&idle);
+    assert(player_pos_ms() == 0 && player_state() == PS_STOPPED);
+    player_exit();
+    assert(dsp_inits == 0 && dsp_exits == 0 && clears == 0);
     Track a = track("fixtures/regression/gapless.mp3"), b = track("fixtures/regression/gapless2.mp3");
     Decoder *d = decoder_open(a.path); assert(d); int16_t pcm[8192]; int n;
     uint64_t expected = 1;
@@ -72,7 +79,12 @@ int main(void) {
             for (int i = 0; i < n * 2; i++) expected = expected * 31 + (uint16_t)pcm[i];
     }
     decoder_close(d);
-    assert(player_init() == 0); player_play_track(&a, 0); player_prepare_next(&b, 7);
+    assert(player_init() == 0);
+    fail_init = 1; player_play_track(&a, 0);
+    assert(player_state() == PS_STOPPED && player_take_finished() == -2);
+    player_exit(); assert(dsp_exits == 0);
+    fail_init = 0;
+    player_play_track(&a, 0); player_prepare_next(&b, 7);
     int started = 0, finished = 0, underruns = 0;
     for (int tick = 0; tick < 2000 && !finished; tick++) {
         usleep(4000);
@@ -105,5 +117,6 @@ int main(void) {
     assert(finished && repeats == 2 && played - before == 3 * 44100);
     assert(clears == before_clears + 1);
     player_exit();
-    puts("ok player: DSP continuo, PCM exato e interface sincronizada com a faixa audivel");
+    assert(dsp_inits == 2 && dsp_exits == 1);
+    puts("ok player: saida sem DSP, falha de inicializacao e reproducao; DSP continuo, PCM exato e interface sincronizada com a faixa audivel");
 }

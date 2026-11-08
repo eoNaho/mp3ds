@@ -53,6 +53,8 @@ Capas novas usam RGB565 no cache (32 KiB mais cabeçalho); caches RGBA8 antigos
 continuam legíveis. O carregamento tenta as faixas do álbum antes de criar um
 marcador sem capa. “Reescanear” limpa esses marcadores e o cache em memória.
 
+O DSP e a thread de áudio só são iniciados na primeira reprodução. Abrir o app
+e sair sem tocar não executa o encerramento do DSP.
 A thread de áudio pré-abre a próxima faixa usando offset/TOC do índice, com
 validação de tamanho/mtime. Para taxas iguais, enfileira a próxima sem drenar o
 DSP. Tags LAME válidas removem delay/padding; arquivos sem essas tags conservam
@@ -67,6 +69,14 @@ Erros de gravação identificam o arquivo e o código; as tentativas ficam espa�
 em cerca de 5 segundos. A substituição de estado usa `.bak`, recuperado se o
 arquivo principal estiver ausente após uma interrupção. Ao sair, a posição é
 capturada antes de encerrar o DSP, e a mensagem de saída não espera VBlank.
+
+A versao de diagnostico atual mostra **DIAG2** na tela superior. Ao receber START,
+mostra o numero e o nome da etapa diretamente nos dois framebuffers, sem escrever
+no SD nem submeter um novo frame ao Citro3D. O painel substitui o `shutdown.log`
+da versao anterior; informe a ultima etapa visivel se o encerramento parar.
+O rodape superior mostra os picos em milissegundos: L = loop inteiro (inclui
+VBlank), T = app_tick, D = desenho (exclui espera inicial por VBlank), C = upload
+de capa, K = consulta de capas em covers_get. A coleta nao escreve no SD. START e lido antes de app_tick.
 
 ReplayGain continua opcional. A troca do JPEG para libjpeg-turbo com escala DCT
 fica para uma comparação de tempo/RAM no console antes de adicionar a dependência.

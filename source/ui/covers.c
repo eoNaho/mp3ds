@@ -2,6 +2,7 @@
 #include "cover.h"
 #include "config.h"
 #include "texture.h"
+#include "exit_trace.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -59,12 +60,16 @@ static void free_slot(CoverTex *c) {
 }
 
 void covers_exit(void) {
+    exit_trace("covers: waiting worker");
     s_run = false; LightEvent_Signal(&s_wake);
     if (s_th) { threadJoin(s_th, U64_MAX); threadFree(s_th); s_th = NULL; }
+    exit_trace("covers: worker stopped");
     if (s_done.has) free(s_done.data);
     free(s_req.paths); s_req.paths = NULL;
     /* Espera a fila da GPU, sem depender dos callbacks de VBlank na saida. */
+    exit_trace("covers: waiting GPU queue");
     if (C3D_FrameBegin(0)) C3D_FrameEnd(0);
+    exit_trace("covers: GPU queue ready");
     for (int i = 0; i < COVER_LRU; i++) free_slot(&s_slot[i]);
 }
 

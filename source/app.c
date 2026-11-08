@@ -5,6 +5,7 @@
 #include "persistence.h"
 #include "util.h"
 #include "cover.h"
+#include "exit_trace.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -466,6 +467,7 @@ void app_tick(App *a) {
         }
     }
     else if (f == 1) { a->fail_streak = 0; app_next(a, 0); }
+    else if (f == -2) { app_toast(a, "DSP indisponivel; confira dspfirm.cdc"); }
     else if (f == -1) {                      /* arquivo ruim: pula, mas nao entra em loop se tudo falhar */
         if (++a->fail_streak < 5) app_next(a, 0); else { player_stop(); a->cur = -1; app_save_resume(a); app_toast(a, "Nao consegui tocar as faixas"); }
     }
@@ -521,25 +523,37 @@ void app_tick(App *a) {
 void app_init(App *a) {
     memset(a, 0, sizeof *a);
     a->cur = -1;
+    exit_trace("boot: persistence start");
     if (persistence_init() != 0) app_toast(a, "Salvamento em segundo plano indisponivel");
     queue_init(&a->q, (unsigned)time(NULL));
     a->sort_mode = SORT_ARTISTA;
     a->index_loaded = library_load_index(&a->lib, INDEX_PATH) == 0;
+    char steps[64];
+    snprintf(steps, sizeof steps, "boot: index %s (%d faixas)",
+             a->index_loaded ? "ok" : "ausente/invalido", a->lib.count);
+    exit_trace(steps);
     resume_load(RESUME_PATH, a->resume_path, sizeof a->resume_path, &a->resume_ms);
+    exit_trace("boot: resume ok");
     app_build_albums(a);
     app_refresh_playlists(a);
+    exit_trace("boot: playlists ok");
     rebuild_view(a);
     if (session_load(SESSION_PATH, &a->lib, &a->q) == 0) {
         a->cur = queue_current(&a->q);
         app_toast(a, "Fila restaurada. B ou play para continuar");
     }
+    char qsteps[48];
+    snprintf(qsteps, sizeof qsteps, "boot: fila carregada (%d itens)", a->q.count);
+    exit_trace(qsteps);
     /* retomada: seleciona a ultima faixa tocada para achar facil (e mostra no topo) */
     int i = library_find_path(&a->lib, a->resume_path);
+    exit_trace("boot: app init ok");
     if (i >= 0) { a->sel[TAB_SONGS] = app_id_to_row(a, i); a->top[TAB_SONGS] = a->sel[TAB_SONGS] > 0 ? a->sel[TAB_SONGS] - 1 : 0; if (!a->q.count) a->cur = i; }
 }
 
 void app_exit(App *a) {
     a->quit = 1;
+    exit_trace("app: waiting scan");
 #ifdef __3DS__
     /* O scan usa App e o SD: cancelar e aguardar antes de salvar/liberar tudo. */
     a->scan_abort = 1;
@@ -550,14 +564,19 @@ void app_exit(App *a) {
         s_scan_done = 0;
     }
 #endif
+    exit_trace("app: queuing final save");
     app_save_resume(a);
+    exit_trace("app: waiting save worker");
     persistence_exit();
+    exit_trace("app: save worker stopped");
     if (persistence_take_error()) a->stats_dirty = 1;
     /* Fallback apenas ao sair, se o worker nao iniciou ou o SD falhou. */
     if ((a->stats_dirty || a->session_dirty) && !a->scan_busy) {
+        exit_trace("app: synchronous save fallback");
         SaveState *state = save_state_capture(&a->lib, &a->q, a->resume_path, a->resume_ms, 1);
         if (state) { save_state_write(state, SESSION_PATH, RESUME_PATH, INDEX_PATH); save_state_free(state); }
     }
+    exit_trace("app: freeing library");
     player_stop();
     queue_free(&a->q);
     library_free(&a->lib);

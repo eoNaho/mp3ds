@@ -30,11 +30,16 @@ AccessControlInfo:
    - DirectSdmcWrite
 
   IdealProcessor                : 0
-  AffinityMask                  : 1
+  # Baseado no rsf do 3dslibris: AffinityMask 1 prendia todas as threads do
+  # processo (incl. o handler APT do libctru) ao core 0 (core de sistema no
+  # O3DS), e a transicao HOME congela sem SystemMode definido. Mask 3 permite
+  # cores 0+1; MaxCpu 0 deixa o sistema decidir o budget de CPU do app.
+  AffinityMask                  : 3
 
   Priority                      : 16
 
-  MaxCpu                        : 0x9E # Default
+  SystemMode                    : 80MB # 64MB(Default)/96MB/80MB/72MB/32MB
+  MaxCpu                        : 0 # 0 = deixa o sistema decidir
   DisableDebug                  : false
   EnableForceDebug              : false
   CanWriteSharedPage            : false

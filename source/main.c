@@ -8,6 +8,7 @@
 #include "ui.h"
 #include "covers.h"
 #include "session.h"
+#include "exit_trace.h"
 
 /* pilha da thread principal (padrao ~32 KB e curta para scan recursivo + stdio) */
 u32 __stacksize__ = 128 * 1024;
@@ -27,33 +28,65 @@ static void wait_start(void) {
     while (aptMainLoop()) { hidScanInput(); if (hidKeysDown() & KEY_START) break; gspWaitForVBlank(); }
 }
 
+/* Confirmacao de saida na thread principal: A = sair e salvar, B = continuar.
+   Se o aptMainLoop terminar (app fechado pelo sistema), tratamos como B: o
+   fechamento segue pelo caminho padrao do loop. */
+static int wait_confirm_exit(void) {
+    for (;;) {
+        if (!aptMainLoop()) return 0;
+        hidScanInput();
+        u32 down = hidKeysDown();
+        if (down & KEY_A) return 1;
+        if (down & KEY_B) return 0;
+        ui_message("Sair do mp3ds?", "A = sair e salvar   B = continuar");
+        gspWaitForVBlank();
+    }
+}
+
 int main(void) {
     u_mkdir_p(DATA_DIR); u_mkdir_p(COVER_DIR); u_mkdir_p(PLAYLIST_DIR); u_mkdir_p(MUSIC_ROOT);
+    exit_trace_open();
     ui_init();
-
+    exit_trace("boot: ui ready");
     if (player_init() != 0) {
+        exit_trace("boot: audio failed (dspfirm)");
         ui_message("Nao consegui iniciar o audio (DSP)",
                    "Falta o dspfirm.cdc: rode o app DSP1 e tente de novo.  START sai");
         wait_start();
         ui_exit();
         return 1;
     }
+    exit_trace("boot: audio ready");
     covers_init();
     int ptmu_ready = R_SUCCEEDED(ptmuInit());
     u8 shell_open = 1; unsigned shell_poll = 0;
 
     static App app;
     app_init(&app);
+    exit_trace("boot: app loaded");
     if (app_needs_initial_scan(&app)) {
+        exit_trace("boot: initial scan start");
         app_rescan(&app, on_scan, NULL);
+        exit_trace("boot: scan done");
         /* IDs podem ter mudado apos migracao/scan; restaura por caminho. */
         if (session_load(SESSION_PATH, &app.lib, &app.q) == 0) app.cur = queue_current(&app.q);
-    }   /* somente no primeiro uso ou indice ausente/invalido */
+    }
+    exit_trace("boot: loop start");
 
     int redraw = 2;   /* 2 frames: as telas do 3DS tem buffer duplo */
     while (aptMainLoop() && !app.quit) {
+        uint64_t loop_start = osGetTime();
+        hidScanInput();
+        /* START abre a confirmacao de saida em vez de fechar direto. */
+        if (hidKeysDown() & KEY_START) {
+            if (wait_confirm_exit()) { exit_trace_begin(); app.quit = 1; break; }
+            redraw = 2;
+            continue;
+        }
         int was_scanning = app.scan_busy;
+        uint64_t tick_start = osGetTime();
         app_tick(&app);                 /* consome transicoes de audio antes de comandos manuais */
+        unsigned tick_ms = (unsigned)(osGetTime() - tick_start);
         if (ui_input(&app)) redraw = 2;
         if (app.quit) break;            /* START nao inicia mais trabalho nem outro frame */
         if (was_scanning && !app.scan_busy) { covers_exit(); covers_init(); redraw = 2; }
@@ -70,6 +103,7 @@ int main(void) {
 
         if (!shell_open || app.screen_off) {
             svcSleepThread(33 * 1000 * 1000); /* audio continua; GPU fica ociosa */
+            ui_record_loop((unsigned)(osGetTime() - loop_start), tick_ms);
             continue;
         }
         if (redraw > 0 || player_state() == PS_PLAYING || app.toast_frames > 0 || app.scan_busy) {
@@ -78,17 +112,28 @@ int main(void) {
         } else {
             gspWaitForVBlank();        /* ocioso: nao redesenha, poupa bateria */
         }
+        ui_record_loop((unsigned)(osGetTime() - loop_start), tick_ms);
     }
 
+    exit_trace_begin();
+    exit_trace("main: START/close received");
     aptSetSleepAllowed(false);
+    exit_trace("main: showing exit message");
     ui_exit_message();
+    exit_trace("main: capturing resume position");
     app_capture_resume(&app);
+    exit_trace("main: closing audio");
     /* Para leitores de audio/capa antes da ultima gravacao no SD. */
     player_exit();
+    exit_trace("main: closing covers");
     covers_exit();
+    exit_trace("main: saving and closing app");
     app_exit(&app);
+    exit_trace("main: closing PTMU");
     aptSetSleepAllowed(true);
     if (ptmu_ready) ptmuExit();
+    exit_trace("main: closing UI");
     ui_exit();
+    exit_trace("main: returning to loader/system");
     return 0;
 }

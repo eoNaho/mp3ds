@@ -22,6 +22,8 @@
 #include "commands.h"
 #include "touch.h"
 #include "tap_confirm.h"
+#include "debug_screen.h"
+#include "exit_trace.h"
 
 #define M "fixtures/music"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FALHOU %s:%d  %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
@@ -568,6 +570,35 @@ static void t_touch(void) {
     puts("ok touch: zonas, tolerancia, arrasto, soltura e toque duplo");
 }
 
+static unsigned trace_calls, trace_step;
+static void capture_trace(unsigned step, const char *stage) {
+    CHECK(stage && stage[0]); trace_calls++; trace_step = step;
+}
+static void t_shutdown_panel(void) {
+    enum { WIDTH = 320, HEIGHT = 240, GUARD = 32, BYTES = WIDTH * HEIGHT * 3 };
+    static uint8_t memory[BYTES + 2 * GUARD];
+    char long_stage[1000]; memset(long_stage, 'A', sizeof long_stage); long_stage[999] = 0;
+    memset(memory, 0xA5, sizeof memory);
+    debug_screen_draw(memory + GUARD, BYTES, WIDTH, HEIGHT, 123, long_stage);
+    for (int i = 0; i < GUARD; i++) CHECK(memory[i] == 0xA5 && memory[GUARD + BYTES + i] == 0xA5);
+    for (int x = 0; x < WIDTH; x++) for (int y = 64; y < HEIGHT; y++) {
+        size_t offset = GUARD + (x * HEIGHT + HEIGHT - 1 - y) * 3;
+        CHECK(memory[offset] == 0xA5 && memory[offset + 1] == 0xA5 && memory[offset + 2] == 0xA5);
+    }
+    CHECK(memory[GUARD + (HEIGHT - 1) * 3] != 0xA5);
+    memset(memory, 0xA5, sizeof memory);
+    debug_screen_draw(memory + GUARD, 10, WIDTH, HEIGHT, 1, "short buffer");
+    debug_screen_draw(NULL, BYTES, WIDTH, HEIGHT, 1, "null buffer");
+    for (size_t i = 0; i < sizeof memory; i++) CHECK(memory[i] == 0xA5);
+    exit_trace_set_sink(capture_trace);
+    exit_trace("before begin"); CHECK(trace_calls == 0);
+    exit_trace_begin(); CHECK(trace_calls == 1 && trace_step == 1);
+    exit_trace_begin(); CHECK(trace_calls == 1);
+    exit_trace("stopping"); CHECK(trace_calls == 2 && trace_step == 2);
+    exit_trace_set_sink(NULL);
+    puts("ok diagnostico: framebuffer limitado, etapas sem SD e sem inicializacao dupla");
+}
+
 #include "test_regressions.inc"
 
 int main(void) {
@@ -575,7 +606,7 @@ int main(void) {
 #if ENABLE_FLAC
     t_flac();
 #endif
-    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playback_commands(); t_texture_tiles(); t_save_snapshot(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover(); t_touch();
+    t_decoder_xing(); t_viz(); t_queue(); t_queue_slots(); t_queue_session(); t_playback_commands(); t_texture_tiles(); t_save_snapshot(); t_playlist(); t_library(); t_search_filters(); t_search_albums(); t_sort_and_plays(); t_resume(); t_cover(); t_touch(); t_shutdown_panel();
     t_unicode_and_index(); t_legacy_migration(); t_lookup_large(); t_cover_album_refresh(); t_gapless_stream(); t_resume_only();
     puts("TODOS OS TESTES PASSARAM");
     return 0;

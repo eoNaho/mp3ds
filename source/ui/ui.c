@@ -10,6 +10,7 @@
 #include "util.h"
 #include "tap_confirm.h"
 #include "touch.h"
+#include "exit_trace.h"
 
 #define ROW_H    28
 #define ROWS     5
@@ -21,6 +22,7 @@
 static C3D_RenderTarget *s_top, *s_bot;
 static C2D_TextBuf s_buf;
 static u32 BG, PANEL, TXT, DIM, ACCENT0;
+static unsigned s_loop_ms, s_tick_ms, s_draw_ms, s_cover_ms, s_cover_lookup_ms;
 
 /* estado do toque */
 static int s_actions_id = -1, s_a_consumed, s_search_open;
@@ -58,7 +60,10 @@ void ui_exit(void) {
     GSPLCD_PowerOnBacklight(GSPLCD_SCREEN_BOTH);
     gspLcdExit();
     C2D_TextBufDelete(s_buf);
-    C2D_Fini(); C3D_Fini(); gfxExit();
+    exit_trace("ui: C2D_Fini"); C2D_Fini();
+    exit_trace("ui: C3D_Fini"); C3D_Fini();
+    exit_trace("ui: gfxExit"); gfxExit();
+    exit_trace("ui: closed");
 }
 
 /* ---------- helpers de desenho ---------- */
@@ -256,12 +261,12 @@ static void tap(App *a, int x, int y) {
 }
 
 int ui_input(App *a) {
-    hidScanInput();
+    /* main ja leu o HID e verificou START antes do tick. */
     u32 kd = hidKeysDown(), kr = hidKeysDownRepeat(), ku = hidKeysUp(), kh = hidKeysHeld();
     touchPosition tp; hidTouchRead(&tp);
     int dirty = (kd || ku || (kh & KEY_TOUCH)) ? 1 : 0;
 
-    if (kd & KEY_START) { a->quit = 1; return 1; }
+    if (kd & KEY_START) return 1;   /* START tratado no main (confirmacao de saida) */
     if (kd & ~KEY_TOUCH) tap_confirm_reset(&s_tap);
     if (a->screen_off) { s_tg.active = 0; tap_confirm_reset(&s_tap); if (kd) screens_power(a, 0); return 1; }   /* qualquer toque/botao acorda */
 
@@ -354,11 +359,19 @@ int ui_input(App *a) {
 }
 
 /* ---------- desenho ---------- */
+static const CoverTex *measured_cover(App *a) {
+    uint64_t start = osGetTime();
+    const CoverTex *cover = covers_get(&a->lib, a->cur);
+    unsigned elapsed = (unsigned)(osGetTime() - start);
+    if (elapsed > s_cover_lookup_ms) s_cover_lookup_ms = elapsed;
+    return cover;
+}
+
 static void draw_top(App *a, const Viz *v) {
     C2D_TargetClear(s_top, BG);
     C2D_SceneBegin(s_top);
     const Track *tr = (a->cur >= 0 && a->cur < a->lib.count) ? &a->lib.tracks[a->cur] : NULL;
-    const CoverTex *cv = tr ? covers_get(&a->lib, a->cur) : NULL;
+    const CoverTex *cv = tr ? measured_cover(a) : NULL;
     u32 accent = ACCENT0;
 
     if (cv) {   /* fundo "borrado": mini-capa 16x16 esticada com filtro linear + escurecimento */
@@ -402,6 +415,8 @@ static void draw_top(App *a, const Viz *v) {
     if (a->q.shuffle) text("SHUFFLE", 150, 206, 0.36f, accent);
     if (a->q.repeat != REPEAT_OFF) text(a->q.repeat == REPEAT_ONE ? "REPEAT 1" : "REPEAT", 215, 206, 0.36f, accent);
     if (player_eq_get() > 0) text(player_eq_name(player_eq_get()), 286, 206, 0.34f, ACCENT0);
+    snprintf(b, sizeof b, "DIAG2 L%u T%u D%u C%u K%u ms", s_loop_ms, s_tick_ms, s_draw_ms, s_cover_ms, s_cover_lookup_ms);
+    text(b, 24, 226, 0.30f, TXT);
     if (a->toast_frames > 0) text_center(a->toast, TOP_W / 2.0f, 8, 0.42f, TXT);
 }
 
@@ -418,7 +433,7 @@ static void draw_bottom(App *a) {
     C2D_SceneBegin(s_bot);
     int t = a->tab;
     const Track *cur = (a->cur >= 0 && a->cur < a->lib.count) ? &a->lib.tracks[a->cur] : NULL;
-    const CoverTex *cv = cur ? covers_get(&a->lib, a->cur) : NULL;
+    const CoverTex *cv = cur ? measured_cover(a) : NULL;
     u32 accent = cv ? cv->accent : ACCENT0;
 
     if (s_search_open) {
@@ -551,17 +566,31 @@ static void draw_bottom(App *a) {
 
 void ui_draw(App *a) {
     if (a->screen_off) { gspWaitForVBlank(); return; }
+    uint64_t draw_start = osGetTime();
     static Viz viz;
     static unsigned viz_frame;
     /* O visualizador e apenas decorativo: 15 Hz reduz calculos de float sem
        deixar a interface perceptivelmente menos fluida. */
     if ((viz_frame++ & 1u) == 0 || player_state() != PS_PLAYING) player_get_viz(&viz);
+    uint64_t wait_start = osGetTime();
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-    covers_pump(); /* troca texturas somente depois de concluir o frame anterior */
+    uint64_t cover_start = osGetTime();
+    uint64_t wait_ms = cover_start - wait_start;
+    covers_pump();
+    unsigned cover_ms = (unsigned)(osGetTime() - cover_start);
+    if (cover_ms > s_cover_ms) s_cover_ms = cover_ms;
+    /* troca texturas somente depois de concluir o frame anterior */
     C2D_TextBufClear(s_buf);
     draw_top(a, &viz);
     draw_bottom(a);
     C3D_FrameEnd(0);
+    unsigned draw_ms = (unsigned)(osGetTime() - draw_start - wait_ms);
+    if (draw_ms > s_draw_ms) s_draw_ms = draw_ms;
+}
+
+void ui_record_loop(unsigned loop_ms, unsigned tick_ms) {
+    if (loop_ms > s_loop_ms) s_loop_ms = loop_ms;
+    if (tick_ms > s_tick_ms) s_tick_ms = tick_ms;
 }
 
 static void message(const char *l1, const char *l2, u8 flags) {
@@ -577,6 +606,6 @@ static void message(const char *l1, const char *l2, u8 flags) {
 void ui_message(const char *l1, const char *l2) { message(l1, l2, C3D_FRAME_SYNCDRAW); }
 void ui_exit_message(void) {
     GSPLCD_PowerOnBacklight(GSPLCD_SCREEN_BOTH);
-    /* Uma mensagem de saida nunca deve esperar VBlank ou GPU ocupada. */
-    message("Saindo...", "Salvando a fila e encerrando o audio", C3D_FRAME_NONBLOCK);
+    /* Mantem o painel direto: nao submete mais comandos ou transferencias da GPU. */
+    exit_trace("exit screen ready");
 }
